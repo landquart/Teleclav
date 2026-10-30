@@ -48,7 +48,7 @@ internal static class ShellVirtualFileDescriptor
                 do
                 {
                     candidate = $"{stem} ({suffix++}){extension}";
-                    if (!IsSafeName(candidate))
+                    if (!WindowsFileName.IsSafeName(candidate))
                     {
                         throw new ArgumentException("A duplicate name cannot be safely disambiguated.", nameof(entries));
                     }
@@ -78,40 +78,34 @@ internal static class ShellVirtualFileDescriptor
         return data;
     }
 
-    internal static bool CanCreate(SftpFileInfo entry)
-        => entry.IsRegularFile && entry.Size >= 0 && IsSafeName(entry.Name);
-
-    private static bool IsSafeName(string? name)
+    /// <summary>Creates Shell descriptors for an already validated directory hierarchy.</summary>
+    internal static byte[] CreateHierarchy(IReadOnlyList<ShellFolderItem> entries)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.Length >= 260 || name is "." or ".."
-            || name.EndsWith(' ') || name.EndsWith('.')
-            || name.Any(c => c < 32 || "<>:\"/\\|?*".Contains(c)))
+        ArgumentNullException.ThrowIfNull(entries);
+        if (entries.Count == 0) { throw new ArgumentException("The selection is empty.", nameof(entries)); }
+        byte[] data = new byte[checked(4 + entries.Count * 592)];
+        BinaryPrimitives.WriteUInt32LittleEndian(data, (uint)entries.Count);
+        for (int i = 0; i < entries.Count; i++)
         {
-            return false;
+            var entry = entries[i];
+            string name = entry.RelativePath.Replace('/', '\\');
+            if (name.Length >= 260 || entry.Size < 0 || name.Split('\\').Any(part => !WindowsFileName.IsSafeName(part)))
+                throw new ArgumentException("Invalid Shell hierarchy path.", nameof(entries));
+            Span<byte> descriptor = data.AsSpan(4 + i * 592, 592);
+            bool isDirectory = entry.Kind == RemoteDownloadOpKind.MakeDirectory;
+            BinaryPrimitives.WriteUInt32LittleEndian(descriptor, isDirectory ? 0x80000004u : 0x80000044u);
+            BinaryPrimitives.WriteUInt32LittleEndian(descriptor[36..], isDirectory ? 0x10u : 0x80u);
+            if (!isDirectory)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(descriptor[64..], (uint)((ulong)entry.Size >> 32));
+                BinaryPrimitives.WriteUInt32LittleEndian(descriptor[68..], (uint)entry.Size);
+            }
+            Encoding.Unicode.GetBytes(name, descriptor.Slice(72, 520));
         }
-
-        try
-        {
-            _ = new UnicodeEncoding(false, false, true).GetByteCount(name);
-        }
-        catch (EncoderFallbackException)
-        {
-            return false;
-        }
-
-        string stem = name.Split('.')[0].TrimEnd(' ');
-        if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
-            || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
-            || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
-            || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
-            || stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase)
-            || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return !(stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
-            || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
-            && (stem[3] is >= '1' and <= '9' or '\u00b9' or '\u00b2' or '\u00b3'));
+        return data;
     }
+
+    internal static bool CanCreate(SftpFileInfo entry)
+        => entry.IsRegularFile && entry.Size >= 0 && WindowsFileName.IsSafeName(entry.Name);
+
 }

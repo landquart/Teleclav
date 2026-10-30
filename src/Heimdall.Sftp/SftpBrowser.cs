@@ -534,9 +534,15 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
     /// <param name="path">Remote directory path, or null for the current directory.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A read-only list of file/directory entries (excluding "." and "..").</returns>
-    public async Task<IReadOnlyList<SftpFileInfo>> ListDirectoryAsync(
-        string? path = null,
-        CancellationToken ct = default)
+    public Task<IReadOnlyList<SftpFileInfo>> ListDirectoryAsync(
+        string? path = null, CancellationToken ct = default)
+        => ListDirectoryCoreAsync(path, strict: false, ct);
+
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<SftpFileInfo>> ListDirectoryStrictAsync(string path, CancellationToken ct = default)
+        => ListDirectoryCoreAsync(path, strict: true, ct);
+
+    private async Task<IReadOnlyList<SftpFileInfo>> ListDirectoryCoreAsync(string? path, bool strict, CancellationToken ct)
     {
         string targetPath = path ?? CurrentDirectory;
 
@@ -547,6 +553,10 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             var entries = await Task.Run(() =>
             {
                 ct.ThrowIfCancellationRequested();
+                if (strict && GetRemoteEntryKind(GetEntryWithoutFollowingTarget(client, targetPath).Entry) != RemoteEntryKind.Directory)
+                {
+                    throw new IOException("The remote directory changed type or is a symbolic link.");
+                }
                 return client.ListDirectory(targetPath);
             }, ct).ConfigureAwait(false);
 
@@ -564,6 +574,7 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                 // untrusted value enters, rather than by each consumer separately.
                 if (!IsListableEntryName(entry.Name))
                 {
+                    if (strict) { throw new IOException($"Remote directory contains an unsafe entry name: {entry.Name}"); }
                     Heimdall.Core.Logging.FileLogger.Warn(
                         $"[SftpBrowser] listing of {targetPath} skipped an entry with an unsafe name");
                     continue;
@@ -678,6 +689,10 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             await Task.Run(() =>
             {
                 ct.ThrowIfCancellationRequested();
+                if (maximumBytes is not null && GetRemoteEntryKind(GetEntryWithoutFollowingTarget(client, remotePath).Entry) != RemoteEntryKind.File)
+                {
+                    throw new IOException("The remote file changed type or is a symbolic link.");
+                }
                 var attrs = client.GetAttributes(remotePath);
                 totalBytes = attrs.Size;
             }, ct).ConfigureAwait(false);

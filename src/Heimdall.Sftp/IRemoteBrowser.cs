@@ -59,6 +59,10 @@ public interface IRemoteBrowser : IDisposable
     /// </summary>
     Task<IReadOnlyList<SftpFileInfo>> ListDirectoryAsync(string? path = null, CancellationToken ct = default);
 
+    /// <summary>Lists a directory without silently omitting invalid names.</summary>
+    Task<IReadOnlyList<SftpFileInfo>> ListDirectoryStrictAsync(string path, CancellationToken ct = default)
+        => throw new NotSupportedException("This browser cannot provide a complete listing.");
+
     /// <summary>Returns the current remote working directory path.</summary>
     Task<string> GetCurrentDirectoryAsync(CancellationToken ct = default);
 

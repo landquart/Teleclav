@@ -51,6 +51,18 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         _lifetime = new ShellAsyncLifetime(Cleanup);
     }
 
+    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items)
+    {
+        _browser = browser ?? throw new ArgumentNullException(nameof(browser));
+        ArgumentNullException.ThrowIfNull(items);
+        _files = items.Select(item => new SftpFileInfo(item.RelativePath, item.RemotePath,
+            item.Kind == RemoteDownloadOpKind.MakeDirectory ? RemoteEntryKind.Directory : RemoteEntryKind.File,
+            item.Size, DateTime.UnixEpoch, "", "", "")).ToArray();
+        _descriptor = ShellVirtualFileDescriptor.CreateHierarchy(items);
+        _cache = CreateCache();
+        _lifetime = new ShellAsyncLifetime(Cleanup);
+    }
+
     private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
         (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct));
 
@@ -183,6 +195,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         if (format.cfFormat == _contentsFormat)
         {
             return format.lindex >= 0 && format.lindex < _files.Count
+                && _files[format.lindex].IsRegularFile
                 && (format.tymed & TYMED.TYMED_ISTREAM) != 0 ? 0 : DvEFormatEtc;
         }
 

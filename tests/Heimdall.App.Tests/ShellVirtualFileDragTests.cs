@@ -128,6 +128,26 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public void Hierarchy_AdvertisesDirectoryWithoutFileContents()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ShellFolderItem[] entries = [
+            new(RemoteDownloadOpKind.MakeDirectory, "/project", "project", 0),
+            new(RemoteDownloadOpKind.MakeDirectory, "/project/empty", "project/empty", 0),
+            new(RemoteDownloadOpKind.DownloadFile, "/project/a.txt", "project/a.txt", 5)
+        ];
+        using ShellVirtualFileDrag drag = new(browser, entries);
+        FORMATETC directoryContents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
+        FORMATETC fileContents = Format("FileContents", 2, TYMED.TYMED_ISTREAM);
+        Assert.NotEqual(0, drag.QueryGetData(ref directoryContents));
+        Assert.Equal(0, drag.QueryGetData(ref fileContents));
+        byte[] descriptor = ShellVirtualFileDescriptor.CreateHierarchy(entries);
+        Assert.Equal(3u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(descriptor));
+        Assert.Equal(0x10u, System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(descriptor.AsSpan(4 + 592 + 36)));
+        Assert.Equal("project\\empty", System.Text.Encoding.Unicode.GetString(descriptor.AsSpan(4 + 592 + 72, 520)).TrimEnd('\0'));
+    }
+
+    [Fact]
     public void AsyncExtraction_KeepsDownloadsAvailableAfterDragReturns()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
