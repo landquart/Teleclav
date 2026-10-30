@@ -11,13 +11,14 @@ namespace Heimdall.App.Views;
 /// <summary>Provides remote files as Shell virtual files, retaining the internal drag marker.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ShellVirtualFileDrag : ComDataObject
+public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
 {
     private const int DvEFormatEtc = unchecked((int)0x80040064);
     private const int ENotImpl = unchecked((int)0x80004001);
     private const int OleEAdvisenotSupported = unchecked((int)0x80040003);
     private readonly byte[] _descriptor;
     private readonly IRemoteBrowser _browser;
+    private readonly ShellDownloadCache _cache;
     private readonly IReadOnlyList<SftpFileInfo> _files;
     private readonly short _descriptorFormat = (short)DataFormats.GetDataFormat("FileGroupDescriptorW").Id;
     private readonly short _contentsFormat = (short)DataFormats.GetDataFormat("FileContents").Id;
@@ -30,6 +31,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject
         ArgumentNullException.ThrowIfNull(file);
         _files = [file];
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
+        _cache = CreateCache();
     }
 
     internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<SftpFileInfo> files)
@@ -38,7 +40,13 @@ public sealed class ShellVirtualFileDrag : ComDataObject
         ArgumentNullException.ThrowIfNull(files);
         _files = files.ToArray();
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
+        _cache = CreateCache();
     }
+
+    private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
+        (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct));
+
+    public void Dispose() => _cache.Dispose();
 
     internal Exception? TransferError { get; private set; }
 
@@ -49,7 +57,9 @@ public sealed class ShellVirtualFileDrag : ComDataObject
             throw new InvalidOperationException("Shell drag-and-drop requires an STA thread.");
         }
 
-        int result = NativeMethods.DoDragDrop(this, new ShellDropSource(), 3, out _);
+        int result;
+        try { result = NativeMethods.DoDragDrop(this, new ShellDropSource(), 3, out _); }
+        finally { Dispose(); }
         // DRAGDROP_S_DROP and DRAGDROP_S_CANCEL are successful HRESULTs.
         if (result < 0)
         {
@@ -68,21 +78,10 @@ public sealed class ShellVirtualFileDrag : ComDataObject
         if (format.cfFormat == _contentsFormat)
         {
             SftpFileInfo fileEntry = _files[format.lindex];
-            string directory = Directory.CreateTempSubdirectory("teleclav-drag-").FullName;
-            string path = Path.Combine(directory, "content");
             try
             {
-                // The actual browser is captured by the view, including host-key verification.
-                // Run outside the UI synchronization context; no data is read on drag-over.
-                Task.Run(() => _browser.DownloadFileAsync(fileEntry.FullPath, path, overwrite: false)).GetAwaiter().GetResult();
-                if (new FileInfo(path).Length != fileEntry.Size)
-                {
-                    throw new IOException("The remote file changed size during the transfer.");
-                }
-
-                FileStream file = new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
-                    81920, FileOptions.DeleteOnClose | FileOptions.SequentialScan);
-                var stream = new ShellReadStream(file, directory);
+                Stream file = _cache.OpenAsync(format.lindex, fileEntry.Size, CancellationToken.None).GetAwaiter().GetResult();
+                var stream = new ShellReadStream(file);
                 try
                 {
                     medium.unionmember = Marshal.GetComInterfaceForObject(stream, typeof(IStream));
@@ -97,7 +96,6 @@ public sealed class ShellVirtualFileDrag : ComDataObject
             catch (Exception ex)
             {
                 TransferError = ex;
-                try { Directory.Delete(directory, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 throw;
             }
 

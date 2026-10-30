@@ -177,6 +177,14 @@ public sealed class LoggingRemoteBrowser
             (ms, category) => SessionOperationRecord.Download.Error(_protocol, _host, remotePath, localPath, ms, category));
 
     /// <inheritdoc />
+    public Task DownloadFileWithinLimitAsync(string remotePath, string localPath, long maximumBytes, CancellationToken ct = default)
+        => RunLoggedAsync(
+            () => _inner.DownloadFileWithinLimitAsync(remotePath, localPath, maximumBytes, ct),
+            ms => SessionOperationRecord.Download.Success(_protocol, _host, remotePath, localPath, FileLength(localPath), ms),
+            ms => SessionOperationRecord.Download.Cancelled(_protocol, _host, remotePath, localPath, ms),
+            (ms, category) => SessionOperationRecord.Download.Error(_protocol, _host, remotePath, localPath, ms, category));
+
+    /// <inheritdoc />
     public Task UploadFileAsync(string localPath, string remotePath, CancellationToken ct = default)
         => UploadFileAsync(localPath, remotePath, overwrite: true, ct);
 

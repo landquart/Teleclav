@@ -23,7 +23,7 @@ public sealed class ShellVirtualFileDragTests
     [Fact]
     public void Formats_OfferOneDescriptorAndOneIndexedStream()
     {
-        ShellVirtualFileDrag drag = CreateDrag();
+        using ShellVirtualFileDrag drag = CreateDrag();
         FORMATETC descriptor = Format("FileGroupDescriptorW", -1, TYMED.TYMED_HGLOBAL);
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         Assert.Equal(0, drag.QueryGetData(ref descriptor));
@@ -37,7 +37,7 @@ public sealed class ShellVirtualFileDragTests
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/b.txt" }];
-        ShellVirtualFileDrag drag = new(browser, entries);
+        using ShellVirtualFileDrag drag = new(browser, entries);
         FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
         Assert.Equal(0, drag.QueryGetData(ref contents));
         contents.lindex = 2;
@@ -53,7 +53,7 @@ public sealed class ShellVirtualFileDragTests
         BrowserProxy proxy = (BrowserProxy)browser;
         proxy.ProvideContent = true;
         SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/other/b.txt" }];
-        ShellVirtualFileDrag drag = new(browser, entries);
+        using ShellVirtualFileDrag drag = new(browser, entries);
         FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
         drag.GetData(ref contents, out STGMEDIUM medium);
         ShellReadStream? stream = null;
@@ -75,7 +75,7 @@ public sealed class ShellVirtualFileDragTests
     [Fact]
     public void EnumerateFormats_AdvertisesDescriptorContentsAndInternalMarker()
     {
-        ShellVirtualFileDrag drag = CreateDrag();
+        using ShellVirtualFileDrag drag = CreateDrag();
         IEnumFORMATETC enumerator = drag.EnumFormatEtc(DATADIR.DATADIR_GET);
         FORMATETC[] one = new FORMATETC[1];
         List<short> formats = [];
@@ -94,11 +94,12 @@ public sealed class ShellVirtualFileDragTests
     public void GetContents_MissingRemoteFile_ReportsFailure()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
-        ShellVirtualFileDrag drag = new(browser, FileEntry());
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         Assert.Throws<FileNotFoundException>(() => drag.GetData(ref contents, out _));
         Assert.IsType<FileNotFoundException>(drag.TransferError);
         string attemptedPath = Assert.IsType<string>(((BrowserProxy)browser).LastPath);
+        drag.Dispose();
         Assert.False(Directory.Exists(Path.GetDirectoryName(attemptedPath)));
     }
 
@@ -107,7 +108,7 @@ public sealed class ShellVirtualFileDragTests
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         ((BrowserProxy)browser).ProvideContent = true;
-        ShellVirtualFileDrag drag = new(browser, FileEntry());
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         drag.GetData(ref contents, out STGMEDIUM medium);
         Assert.Equal(TYMED.TYMED_ISTREAM, medium.tymed);
@@ -164,7 +165,7 @@ public sealed class ShellVirtualFileDragTests
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadFileAsync))
+            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadFileWithinLimitAsync))
             {
                 throw new NotSupportedException();
             }
