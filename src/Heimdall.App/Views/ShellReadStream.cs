@@ -8,10 +8,13 @@ namespace Heimdall.App.Views;
 /// <summary>A read-only COM stream backed by a temporary file, held until the Shell releases it.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ShellReadStream(FileStream stream, string directory) : IStream, IDisposable
+public sealed class ShellReadStream : IStream, IDisposable
 {
-    private readonly FileStream _stream = stream;
-    private readonly string _directory = directory;
+    private readonly Stream _stream;
+    private readonly string? _directory;
+
+    public ShellReadStream(FileStream stream, string directory) { _stream = stream; _directory = directory; }
+    internal ShellReadStream(Stream stream) { _stream = stream; }
     private bool _disposed;
 
     ~ShellReadStream() => Dispose();
@@ -21,7 +24,10 @@ public sealed class ShellReadStream(FileStream stream, string directory) : IStre
         if (_disposed) { return; }
         _disposed = true;
         try { _stream.Dispose(); } catch (IOException) { }
-        try { Directory.Delete(_directory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        if (_directory is not null)
+        {
+            try { Directory.Delete(_directory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
         GC.SuppressFinalize(this);
     }
 

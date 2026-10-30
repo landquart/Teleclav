@@ -73,6 +73,10 @@ public interface IRemoteBrowser : IDisposable
         => overwrite ? DownloadFileAsync(remotePath, localPath, ct)
             : throw new NotSupportedException("The browser does not support exclusive local publication.");
 
+    /// <summary>Downloads exclusively, rejecting data beyond the supplied byte limit.</summary>
+    Task DownloadFileWithinLimitAsync(string remotePath, string localPath, long maximumBytes, CancellationToken ct = default)
+        => throw new NotSupportedException("The browser does not support bounded downloads.");
+
     /// <summary>Uploads a local file to a remote path.</summary>
     Task UploadFileAsync(string localPath, string remotePath, CancellationToken ct = default);
 

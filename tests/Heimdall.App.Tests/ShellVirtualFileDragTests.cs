@@ -23,7 +23,7 @@ public sealed class ShellVirtualFileDragTests
     [Fact]
     public void Formats_OfferOneDescriptorAndOneIndexedStream()
     {
-        ShellVirtualFileDrag drag = CreateDrag();
+        using ShellVirtualFileDrag drag = CreateDrag();
         FORMATETC descriptor = Format("FileGroupDescriptorW", -1, TYMED.TYMED_HGLOBAL);
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         Assert.Equal(0, drag.QueryGetData(ref descriptor));
@@ -33,9 +33,49 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public void Formats_MultipleFiles_AcceptsEveryValidIndex()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/b.txt" }];
+        using ShellVirtualFileDrag drag = new(browser, entries);
+        FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
+        Assert.Equal(0, drag.QueryGetData(ref contents));
+        contents.lindex = 2;
+        Assert.NotEqual(0, drag.QueryGetData(ref contents));
+        contents.lindex = -1;
+        Assert.NotEqual(0, drag.QueryGetData(ref contents));
+    }
+
+    [Fact]
+    public void GetContents_SecondIndex_UsesSecondRemotePath()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/other/b.txt" }];
+        using ShellVirtualFileDrag drag = new(browser, entries);
+        FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        ShellReadStream? stream = null;
+        try
+        {
+            stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+            Assert.Equal("/other/b.txt", proxy.LastRemotePath);
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream?.Dispose();
+        }
+    }
+
+    [Fact]
     public void EnumerateFormats_AdvertisesDescriptorContentsAndInternalMarker()
     {
-        ShellVirtualFileDrag drag = CreateDrag();
+        using ShellVirtualFileDrag drag = CreateDrag();
         IEnumFORMATETC enumerator = drag.EnumFormatEtc(DATADIR.DATADIR_GET);
         FORMATETC[] one = new FORMATETC[1];
         List<short> formats = [];
@@ -54,11 +94,12 @@ public sealed class ShellVirtualFileDragTests
     public void GetContents_MissingRemoteFile_ReportsFailure()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
-        ShellVirtualFileDrag drag = new(browser, FileEntry());
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         Assert.Throws<FileNotFoundException>(() => drag.GetData(ref contents, out _));
         Assert.IsType<FileNotFoundException>(drag.TransferError);
         string attemptedPath = Assert.IsType<string>(((BrowserProxy)browser).LastPath);
+        drag.Dispose();
         Assert.False(Directory.Exists(Path.GetDirectoryName(attemptedPath)));
     }
 
@@ -67,7 +108,7 @@ public sealed class ShellVirtualFileDragTests
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         ((BrowserProxy)browser).ProvideContent = true;
-        ShellVirtualFileDrag drag = new(browser, FileEntry());
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         drag.GetData(ref contents, out STGMEDIUM medium);
         Assert.Equal(TYMED.TYMED_ISTREAM, medium.tymed);
@@ -84,6 +125,36 @@ public sealed class ShellVirtualFileDragTests
             Marshal.Release(medium.unionmember);
             stream?.Dispose();
         }
+    }
+
+    [Fact]
+    public void AsyncExtraction_KeepsDownloadsAvailableAfterDragReturns()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ((BrowserProxy)browser).ProvideContent = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        drag.Dispose(); // DoDragDrop returned; the target is still extracting.
+        FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        ShellReadStream? stream = null;
+        string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
+        try
+        {
+            stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 1));
+            Assert.True(Directory.Exists(directory));
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream?.Dispose();
+        }
+        Assert.False(Directory.Exists(directory));
     }
 
     [Fact]
@@ -120,15 +191,17 @@ public sealed class ShellVirtualFileDragTests
     {
         public bool ProvideContent { get; set; }
         public string? LastPath { get; private set; }
+        public string? LastRemotePath { get; private set; }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadFileAsync))
+            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadFileWithinLimitAsync))
             {
                 throw new NotSupportedException();
             }
 
-            LastPath = (string)args![1]!;
+            LastRemotePath = (string)args![0]!;
+            LastPath = (string)args[1]!;
             if (!ProvideContent)
             {
                 return Task.FromException(new FileNotFoundException("remote file"));

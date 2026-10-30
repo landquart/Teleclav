@@ -651,7 +651,17 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         => DownloadFileAsync(remotePath, localPath, overwrite: true, ct);
 
     /// <inheritdoc/>
-    public async Task DownloadFileAsync(string remotePath, string localPath, bool overwrite, CancellationToken ct = default)
+    public Task DownloadFileAsync(string remotePath, string localPath, bool overwrite, CancellationToken ct = default)
+        => DownloadFileCoreAsync(remotePath, localPath, overwrite, null, ct);
+
+    /// <inheritdoc/>
+    public Task DownloadFileWithinLimitAsync(string remotePath, string localPath, long maximumBytes, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
+        return DownloadFileCoreAsync(remotePath, localPath, false, maximumBytes, ct);
+    }
+
+    private async Task DownloadFileCoreAsync(string remotePath, string localPath, bool overwrite, long? maximumBytes, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
@@ -682,7 +692,8 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                     bufferSize: 81920,
                     useAsync: true))
                 {
-                    using CancellationAwareStream outputStream = new(fileStream, ct);
+                    using LimitedWriteStream? limited = maximumBytes is long limit ? new(fileStream, limit) : null;
+                    using CancellationAwareStream outputStream = new(limited ?? (Stream)fileStream, ct);
 
                     await Task.Run(() =>
                     {

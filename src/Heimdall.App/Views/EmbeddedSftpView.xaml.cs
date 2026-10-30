@@ -2213,7 +2213,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
     private void OnFileListPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         => _dragSource?.OnPreviewMouseMove(e);
 
-    /// <summary>Runs the selected rows as an internal drag or a single Shell virtual file.</summary>
+    /// <summary>Runs selected regular files as Shell virtual files, retaining internal drag support.</summary>
     private void StartRemoteDrag(IReadOnlyList<object> rows)
     {
         List<SftpFileInfo> entries = rows.OfType<SftpFileInfo>().ToList();
@@ -2223,18 +2223,27 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
         }
 
         SftpRemoteDragPayload payload = new(_viewModel, entries);
-        if (entries.Count == 1 && ShellVirtualFileDescriptor.CanCreate(entries[0])
-            && _operationsBrowser is { } browser)
+        if (entries.All(ShellVirtualFileDescriptor.CanCreate) && _operationsBrowser is { } browser)
         {
+            bool started = false;
             try
             {
-                ShellVirtualFileDrag shell = new(browser, entries[0]);
+                ShellVirtualFileDrag shell = new(browser, entries);
+                shell.AsyncFailure = failure => Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_disposed) { _viewModel.ShowOperationWarning(failure.Message); }
+                });
                 SftpRemoteDragPayload.ActiveShellDrag = payload;
+                started = true;
                 shell.Start();
                 if (shell.TransferError is { } failure)
                 {
                     _viewModel.ShowOperationWarning(failure.Message);
                 }
+            }
+            catch (ArgumentException ex)
+            {
+                _viewModel.ShowOperationWarning(ex.Message);
             }
             catch (System.Runtime.InteropServices.COMException ex)
             {
@@ -2247,7 +2256,10 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
                 DragOverlay.Visibility = Visibility.Collapsed;
             }
 
-            return;
+            if (started)
+            {
+                return;
+            }
         }
 
         System.Windows.DataObject data = new();
