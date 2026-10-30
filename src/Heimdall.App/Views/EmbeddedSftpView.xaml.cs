@@ -2213,7 +2213,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
     private void OnFileListPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
         => _dragSource?.OnPreviewMouseMove(e);
 
-    /// <summary>Runs the drag of the selected rows; what it carries stays inside the application.</summary>
+    /// <summary>Runs the selected rows as an internal drag or a single Shell virtual file.</summary>
     private void StartRemoteDrag(IReadOnlyList<object> rows)
     {
         List<SftpFileInfo> entries = rows.OfType<SftpFileInfo>().ToList();
@@ -2222,9 +2222,36 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             return;
         }
 
-        System.Windows.DataObject data = new();
-        data.SetData(SftpRemoteDragPayload.FormatName, new SftpRemoteDragPayload(_viewModel, entries));
+        SftpRemoteDragPayload payload = new(_viewModel, entries);
+        if (entries.Count == 1 && ShellVirtualFileDescriptor.CanCreate(entries[0])
+            && _operationsBrowser is { } browser)
+        {
+            try
+            {
+                ShellVirtualFileDrag shell = new(browser, entries[0]);
+                SftpRemoteDragPayload.ActiveShellDrag = payload;
+                shell.Start();
+                if (shell.TransferError is { } failure)
+                {
+                    _viewModel.ShowOperationWarning(failure.Message);
+                }
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                _viewModel.ShowOperationWarning(ex.Message);
+            }
+            finally
+            {
+                SftpRemoteDragPayload.ActiveShellDrag = null;
+                SetDropHighlight(null);
+                DragOverlay.Visibility = Visibility.Collapsed;
+            }
 
+            return;
+        }
+
+        System.Windows.DataObject data = new();
+        data.SetData(SftpRemoteDragPayload.FormatName, payload);
         try
         {
             System.Windows.DragDrop.DoDragDrop(
