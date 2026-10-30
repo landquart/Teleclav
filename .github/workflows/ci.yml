@@ -233,6 +233,11 @@ jobs:
 
       # The Standard edition is self-contained for .NET; the free WebView2
       # Evergreen runtime must already be installed on the destination machine.
+      - name: Restore portable runtime in locked mode
+        run: >
+          dotnet restore src/Heimdall.App/Heimdall.App.csproj
+          -r win-x64 --locked-mode -p:SelfContained=true
+
       - name: Publish portable Windows x64
         run: >
           dotnet publish src/Heimdall.App/Heimdall.App.csproj
