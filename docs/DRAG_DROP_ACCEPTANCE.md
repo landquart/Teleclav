@@ -1,10 +1,10 @@
-# Drag & Drop acceptance — D5 draft
+# Drag & Drop acceptance - D5 draft
 
 Status: **NOT TESTED end-to-end; not release-ready**. Date: 2026-10-30. All functional desktop rows below require Windows 11 x64, Explorer, and a dedicated Ubuntu OpenSSH SFTP account. No interactive Windows desktop or Ubuntu OpenSSH is available in this environment. Use only disposable test data, not secrets or irreplaceable files.
 
 ## Git inputs and CI
 
-`master` was `1959e57c7351d73f1d349b606b19bf6090273db9`. PRs #2–#7 are open drafts, not merged. Their head and base commits:
+`master` was `1959e57c7351d73f1d349b606b19bf6090273db9`. PRs #2-#7 are open drafts, not merged. Their head and base commits:
 
 | PR | Topic | Base | Head |
 |---|---|---|---|
@@ -15,7 +15,7 @@ Status: **NOT TESTED end-to-end; not release-ready**. Date: 2026-10-30. All func
 | #6 | D3 | `8b1b22448924dbe32549c9c0e0329cbd7d8dd864` | `d8358e6c044901ae2977f3790152406f0043e886` |
 | #7 | D4 | `d8358e6c044901ae2977f3790152406f0043e886` | `0bbed929a4be9a472e139f7806747653f90fd2dc` |
 
-D5 applies the reviewed patches of #2 and #3 to the #7 tree in a separate branch, without merging those PRs. The #2 and #3 changed-file sets do not intersect the D1–D4 changed-file set; D1–D4 intentionally overlap in their stacked Shell/SFTP files. No textual conflict arose when applying #2 and #3. No review submissions or inline review threads were returned for #2–#7 at inspection. The GitHub connector returned no PR workflow runs or commit statuses for their listed heads. This does not establish why CI did not run. See the file inventories below.
+D5 applies the reviewed patches of #2 and #3 to the #7 tree in a separate branch, without merging those PRs. The #2 and #3 changed-file sets do not intersect the D1-D4 changed-file set; D1-D4 intentionally overlap in their stacked Shell/SFTP files. No textual conflict arose when applying #2 and #3. No review submissions or inline review threads were returned for #2-#7 at inspection. The GitHub connector returned no PR workflow runs or commit statuses for their listed heads. This does not establish why CI did not run. See the file inventories below.
 
 The portable workflow is inherited from #2 and requests read-only contents permission, Windows `windows-2025-vs2026`, SDK 10, Release `win-x64` self-contained .NET publish, ZIP and SHA-256 as a 14-day Actions artifact. It uses no publication secret or paid signing. Workflow execution and Windows launch are **NOT TESTED**. WebView2 Evergreen Runtime is still required separately. A Linux cross-publish uses a non-locked restore due Linux RID and is not proof of the Windows workflow.
 
