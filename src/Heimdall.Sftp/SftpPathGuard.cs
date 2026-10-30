@@ -60,7 +60,7 @@ public static class SftpPathGuard
         // character and every shell command this client builds refuses it downstream,
         // with an unlocalized exception. Refusing at the boundary keeps such an entry
         // out of the model entirely.
-        foreach (char c in trimmed)
+        foreach (char c in name)
         {
             if (c is '/' or '\\' || char.IsControl(c))
             {

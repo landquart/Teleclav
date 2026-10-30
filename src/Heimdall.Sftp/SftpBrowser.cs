@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-using System.Text.Json;
 using Heimdall.Core.Ssh;
 using Heimdall.Ssh;
 using Renci.SshNet;
@@ -540,42 +539,13 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         => ListDirectoryCoreAsync(path, ct);
 
     /// <inheritdoc/>
-    public async Task<IReadOnlyList<SftpFileInfo>> ListDirectoryStrictAsync(string path, CancellationToken ct = default)
+    public Task<IReadOnlyList<SftpFileInfo>> ListDirectoryStrictAsync(string path, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var (connection, verifier) = SecureAccessContext();
-        using MemoryStream buffer = new();
-        using LimitedWriteStream limit = new(buffer, 16L * 1024 * 1024);
-        await SecureRemoteAccess.RunAsync(connection, verifier, "list", path, 0, limit, ct).ConfigureAwait(false);
-        buffer.Position = 0;
-        using JsonDocument document = await JsonDocument.ParseAsync(buffer, cancellationToken: ct).ConfigureAwait(false);
-        List<SftpFileInfo> result = [];
-        foreach (JsonElement item in document.RootElement.EnumerateArray())
-        {
-            ct.ThrowIfCancellationRequested();
-            if (item.GetArrayLength() != 4 || result.Count >= 10000) { throw new IOException("Invalid secure directory listing."); }
-            string name = item[0].GetString() ?? throw new IOException("A remote name is missing.");
-            if (!IsListableEntryName(name)) { throw new IOException("Remote directory contains an unsafe entry name."); }
-            RemoteEntryKind kind = item[1].GetString() switch
-            {
-                "file" => RemoteEntryKind.File, "directory" => RemoteEntryKind.Directory,
-                "link" => RemoteEntryKind.SymbolicLink, _ => RemoteEntryKind.Unknown,
-            };
-            long size = item[2].GetInt64();
-            DateTime modified = DateTimeOffset.FromUnixTimeSeconds(item[3].GetInt64()).UtcDateTime;
-            result.Add(new SftpFileInfo(name, path.TrimEnd('/') + "/" + name, kind, size, modified, "", "", ""));
-        }
-        return result;
+        return ListDirectoryCoreAsync(path, ct, strict: true);
     }
 
-    private (SshConnectionParams, PinnedFingerprintVerifier) SecureAccessContext()
-    {
-        if (!IsConnected || _connectionParams is not { } connection || _pinnedHostKeyVerifier is not { } verifier)
-            throw new IOException("Secure access requires an active connection with a pinned SSH host key.");
-        return (connection, verifier);
-    }
-
-    private async Task<IReadOnlyList<SftpFileInfo>> ListDirectoryCoreAsync(string? path, CancellationToken ct)
+    private async Task<IReadOnlyList<SftpFileInfo>> ListDirectoryCoreAsync(string? path, CancellationToken ct, bool strict = false)
     {
         string targetPath = path ?? CurrentDirectory;
 
@@ -586,12 +556,14 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             var entries = await Task.Run(() =>
             {
                 ct.ThrowIfCancellationRequested();
+                if (strict) { EnsureDirectoryComponents(client, targetPath, ct); }
                 return client.ListDirectory(targetPath);
             }, ct).ConfigureAwait(false);
 
             var result = new List<SftpFileInfo>();
             foreach (ISftpFile entry in entries)
             {
+                ct.ThrowIfCancellationRequested();
                 if (entry.Name is "." or "..")
                 {
                     continue;
@@ -603,14 +575,17 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                 // untrusted value enters, rather than by each consumer separately.
                 if (!IsListableEntryName(entry.Name))
                 {
+                    if (strict) { throw new IOException("The remote directory contains an unsafe name."); }
                     Heimdall.Core.Logging.FileLogger.Warn(
                         $"[SftpBrowser] listing of {targetPath} skipped an entry with an unsafe name");
                     continue;
                 }
 
+                if (strict && result.Count >= 10000) { throw new IOException("The remote directory has too many entries."); }
                 result.Add(ToSftpFileInfo(entry));
             }
 
+            if (strict) { await Task.Run(() => EnsureDirectoryComponents(client, targetPath, ct), ct).ConfigureAwait(false); }
             return result;
         }
         finally
@@ -699,24 +674,56 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
-        var (connection, verifier) = SecureAccessContext();
         string tempPath = AtomicLocalFile.CreateTempPath(localPath);
         bool staged = false;
+        await _clientLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using (FileStream file = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            SftpClient client = GetConnectedClient();
+            try
             {
-                staged = true;
-                using LimitedWriteStream limit = new(file, maximumBytes);
-                await SecureRemoteAccess.RunAsync(connection, verifier, "read", remotePath, maximumBytes, limit, ct).ConfigureAwait(false);
+                await using (FileStream file = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                {
+                    staged = true;
+                    using LimitedWriteStream limit = new(file, maximumBytes);
+                    await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
+                        path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct), ct).ConfigureAwait(false);
+                }
+                ct.ThrowIfCancellationRequested();
+                AtomicLocalFile.Commit(tempPath, localPath, overwrite: false);
             }
-            ct.ThrowIfCancellationRequested();
-            AtomicLocalFile.Commit(tempPath, localPath, overwrite: false);
+            catch
+            {
+                if (staged) { AtomicLocalFile.Rollback(tempPath); }
+                throw;
+            }
         }
-        catch
+        finally { _clientLock.Release(); }
+    }
+
+    private static SftpFileInfo GetGuardedFileInfo(SftpClient client, string path, CancellationToken ct)
+    {
+        int slash = path.LastIndexOf('/');
+        if (slash < 0) { throw new IOException("The remote path must be absolute."); }
+        string parent = slash == 0 ? "/" : path[..slash];
+        EnsureDirectoryComponents(client, parent, ct);
+        if (!SftpPathGuard.IsValidChildName(path[(slash + 1)..])) { throw new IOException("Invalid remote file name."); }
+        ct.ThrowIfCancellationRequested();
+        return ToSftpFileInfo(GetEntryWithoutFollowingTarget(client, path).Entry);
+    }
+
+    private static void EnsureDirectoryComponents(SftpClient client, string path, CancellationToken ct)
+    {
+        if (!path.StartsWith('/')) { throw new IOException("The remote path must be absolute."); }
+        if (path == "/") { return; }
+        string current = "";
+        foreach (string part in path.Split('/').Skip(1))
         {
-            if (staged) { AtomicLocalFile.Rollback(tempPath); }
-            throw;
+            ct.ThrowIfCancellationRequested();
+            if (!SftpPathGuard.IsValidChildName(part)) { throw new IOException("Invalid remote directory name."); }
+            current += "/" + part;
+            if (GetRemoteEntryKind(GetEntryWithoutFollowingTarget(client, current).Entry) != RemoteEntryKind.Directory)
+                throw new IOException("A remote path component is not a directory or is a symbolic link.");
         }
     }
 
