@@ -65,6 +65,9 @@ public sealed class SftpPathGuardTests
     [InlineData("x\0y")]
     [InlineData(@"a\b")]
     [InlineData("x\ny")]
+    [InlineData("\nname")]
+    [InlineData("name\n")]
+    [InlineData("\tname")]
     [InlineData("x\ry")]
     [InlineData("x\ty")]
     public void IsValidChildName_RejectsEmptyDotAndPathLikeNames(string? name)

@@ -104,6 +104,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
     private string? _activeInlineEditorTempPath;
 
     private bool _disposed;
+    private bool _preparingShellFolderDrag;
     private bool _inlineEditorSaveInProgress;
 
     /// <summary>Set when the configured external editor was refused as a shell target.</summary>
@@ -2214,7 +2215,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
         => _dragSource?.OnPreviewMouseMove(e);
 
     /// <summary>Runs selected regular files as Shell virtual files, retaining internal drag support.</summary>
-    private void StartRemoteDrag(IReadOnlyList<object> rows)
+    private async void StartRemoteDrag(IReadOnlyList<object> rows)
     {
         List<SftpFileInfo> entries = rows.OfType<SftpFileInfo>().ToList();
         if (entries.Count == 0)
@@ -2223,12 +2224,42 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
         }
 
         SftpRemoteDragPayload payload = new(_viewModel, entries);
-        if (entries.All(ShellVirtualFileDescriptor.CanCreate) && _operationsBrowser is { } browser)
+        IReadOnlyList<ShellFolderItem>? hierarchy = null;
+        bool folderPreparationFailed = false;
+        if (entries.Any(entry => entry.IsDirectory) && _operationsBrowser is { } folderBrowser)
+        {
+            if (_preparingShellFolderDrag) { return; }
+            _preparingShellFolderDrag = true;
+            using CancellationTokenSource cancellation = new();
+            System.Windows.Threading.DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(100) };
+            timer.Tick += (_, _) =>
+            {
+                if (_disposed || Mouse.LeftButton != MouseButtonState.Pressed) { cancellation.Cancel(); }
+            };
+            timer.Start();
+            try
+            {
+                hierarchy = await Task.Run(() => ShellFolderPlanner.PlanAsync(entries, folderBrowser.ListDirectoryStrictAsync, cancellation.Token));
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                folderPreparationFailed = true;
+                if (!_disposed) { _viewModel.ShowOperationWarning(ex.Message); }
+            }
+            finally
+            {
+                timer.Stop();
+                _preparingShellFolderDrag = false;
+            }
+            if (_disposed || Mouse.LeftButton != MouseButtonState.Pressed) { return; }
+        }
+        if (!folderPreparationFailed && (hierarchy is not null || entries.All(ShellVirtualFileDescriptor.CanCreate)) && _operationsBrowser is { } browser)
         {
             bool started = false;
             try
             {
-                ShellVirtualFileDrag shell = new(browser, entries);
+                ShellVirtualFileDrag shell = hierarchy is null ? new(browser, entries) : new(browser, hierarchy);
                 shell.AsyncFailure = failure => Dispatcher.BeginInvoke(() =>
                 {
                     if (!_disposed) { _viewModel.ShowOperationWarning(failure.Message); }

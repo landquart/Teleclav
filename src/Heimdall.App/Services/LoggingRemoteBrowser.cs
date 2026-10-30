@@ -157,6 +157,10 @@ public sealed class LoggingRemoteBrowser
         => _inner.ListDirectoryAsync(path, ct);
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<SftpFileInfo>> ListDirectoryStrictAsync(string path, CancellationToken ct = default)
+        => _inner.ListDirectoryStrictAsync(path, ct);
+
+    /// <inheritdoc />
     public Task<string> GetCurrentDirectoryAsync(CancellationToken ct = default)
         => _inner.GetCurrentDirectoryAsync(ct);
 
