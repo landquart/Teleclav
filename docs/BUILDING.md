@@ -16,6 +16,7 @@ The commands above include compiler analyzers and treat warnings as errors, as c
 To make the same self-contained .NET Standard portable package used by PR CI:
 
 ```powershell
+dotnet restore src/Heimdall.App/Heimdall.App.csproj -r win-x64 --locked-mode -p:SelfContained=true
 dotnet publish src/Heimdall.App/Heimdall.App.csproj -c Release -r win-x64 --self-contained true --no-restore -p:PublishSingleFile=false -p:HeimdallEdition=Standard -o artifacts/portable
 Copy-Item LICENSE,THIRD-PARTY-NOTICES.md artifacts/portable/
 Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/Teleclav-portable-win-x64.zip
