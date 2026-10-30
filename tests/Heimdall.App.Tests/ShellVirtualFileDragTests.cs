@@ -128,6 +128,36 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public void AsyncExtraction_KeepsDownloadsAvailableAfterDragReturns()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ((BrowserProxy)browser).ProvideContent = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        drag.Dispose(); // DoDragDrop returned; the target is still extracting.
+        FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        ShellReadStream? stream = null;
+        string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
+        try
+        {
+            stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 1));
+            Assert.True(Directory.Exists(directory));
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream?.Dispose();
+        }
+        Assert.False(Directory.Exists(directory));
+    }
+
+    [Fact]
     public void ReadStream_ProvidesBytesAndReleasesTemporaryFile()
     {
         string directory = Directory.CreateTempSubdirectory("teleclav-test-").FullName;

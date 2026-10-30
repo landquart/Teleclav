@@ -11,7 +11,7 @@ namespace Heimdall.App.Views;
 /// <summary>Provides remote files as Shell virtual files, retaining the internal drag marker.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
+public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapability, IDisposable
 {
     private const int DvEFormatEtc = unchecked((int)0x80040064);
     private const int ENotImpl = unchecked((int)0x80004001);
@@ -19,6 +19,12 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
     private readonly byte[] _descriptor;
     private readonly IRemoteBrowser _browser;
     private readonly ShellDownloadCache _cache;
+    private readonly ShellAsyncLifetime _lifetime;
+    private readonly object _asyncGate = new();
+    private IntPtr _asyncReference;
+    private bool _asyncClosed;
+    private bool _asyncMode;
+    internal Action<Exception>? AsyncFailure { get; set; }
     private readonly IReadOnlyList<SftpFileInfo> _files;
     private readonly short _descriptorFormat = (short)DataFormats.GetDataFormat("FileGroupDescriptorW").Id;
     private readonly short _contentsFormat = (short)DataFormats.GetDataFormat("FileContents").Id;
@@ -32,6 +38,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
         _files = [file];
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
+        _lifetime = new ShellAsyncLifetime(Cleanup);
     }
 
     internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<SftpFileInfo> files)
@@ -41,14 +48,29 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
         _files = files.ToArray();
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
+        _lifetime = new ShellAsyncLifetime(Cleanup);
     }
 
     private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
         (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct));
 
-    public void Dispose() => _cache.Dispose();
+    private void Cleanup()
+    {
+        IntPtr reference;
+        lock (_asyncGate)
+        {
+            _asyncClosed = true;
+            reference = _asyncReference;
+            _asyncReference = IntPtr.Zero;
+        }
+        try { _cache.Dispose(); }
+        finally { if (reference != IntPtr.Zero) { Marshal.Release(reference); } }
+    }
 
-    internal Exception? TransferError { get; private set; }
+    public void Dispose() => _lifetime.DragReturned();
+
+    private Exception? _transferError;
+    internal Exception? TransferError => Volatile.Read(ref _transferError);
 
     internal void Start()
     {
@@ -58,13 +80,49 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
         }
 
         int result;
-        try { result = NativeMethods.DoDragDrop(this, new ShellDropSource(), 3, out _); }
+        try
+        {
+            Marshal.ThrowExceptionForHR(SetAsyncMode(true));
+            result = NativeMethods.DoDragDrop(this, new ShellDropSource(), 3, out _);
+        }
         finally { Dispose(); }
         // DRAGDROP_S_DROP and DRAGDROP_S_CANCEL are successful HRESULTs.
         if (result < 0)
         {
             Marshal.ThrowExceptionForHR(result);
         }
+    }
+
+    public int SetAsyncMode(bool enabled)
+    {
+        lock (_asyncGate)
+        {
+            if (_asyncClosed) { return unchecked((int)0x8000FFFF); }
+            if (enabled && _asyncReference == IntPtr.Zero)
+            {
+                _asyncReference = Marshal.GetComInterfaceForObject(this, typeof(IDataObjectAsyncCapability));
+            }
+            _asyncMode = enabled;
+        }
+        return 0;
+    }
+
+    public int GetAsyncMode(out bool enabled) { lock (_asyncGate) { enabled = _asyncMode; } return 0; }
+    public int StartOperation(IntPtr reserved) => _lifetime.Begin() ? 0 : unchecked((int)0x8000FFFF);
+    public int InOperation(out bool active) { active = _lifetime.InOperation; return 0; }
+    public int EndOperation(int result, IntPtr reserved, uint effects)
+    {
+        try
+        {
+            Exception? failure = TransferError;
+            if (failure is null && result < 0)
+            {
+                failure = Marshal.GetExceptionForHR(result) ?? new COMException("Shell transfer failed", result);
+            }
+            if (failure is not null) { AsyncFailure?.Invoke(failure); }
+        }
+        finally { _lifetime.End(); }
+        return 0;
     }
 
     public void GetData(ref FORMATETC format, out STGMEDIUM medium)
@@ -95,7 +153,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
             }
             catch (Exception ex)
             {
-                TransferError = ex;
+                Interlocked.CompareExchange(ref _transferError, ex, null);
                 throw;
             }
 
@@ -184,4 +242,16 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDisposable
         [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GlobalUnlock(IntPtr handle);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalFree(IntPtr handle);
     }
+}
+
+[ComVisible(true)]
+[Guid("3D8B0590-F691-11D2-8EA9-006097DF5BD4")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IDataObjectAsyncCapability
+{
+    [PreserveSig] int SetAsyncMode([MarshalAs(UnmanagedType.Bool)] bool enabled);
+    [PreserveSig] int GetAsyncMode([MarshalAs(UnmanagedType.Bool)] out bool enabled);
+    [PreserveSig] int StartOperation(IntPtr reserved);
+    [PreserveSig] int InOperation([MarshalAs(UnmanagedType.Bool)] out bool active);
+    [PreserveSig] int EndOperation(int result, IntPtr reserved, uint effects);
 }

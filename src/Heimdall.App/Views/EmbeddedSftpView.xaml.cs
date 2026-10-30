@@ -2229,6 +2229,10 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             try
             {
                 ShellVirtualFileDrag shell = new(browser, entries);
+                shell.AsyncFailure = failure => Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_disposed) { _viewModel.ShowOperationWarning(failure.Message); }
+                });
                 SftpRemoteDragPayload.ActiveShellDrag = payload;
                 started = true;
                 shell.Start();
