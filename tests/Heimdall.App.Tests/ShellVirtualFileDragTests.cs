@@ -33,6 +33,46 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public void Formats_MultipleFiles_AcceptsEveryValidIndex()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/b.txt" }];
+        ShellVirtualFileDrag drag = new(browser, entries);
+        FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
+        Assert.Equal(0, drag.QueryGetData(ref contents));
+        contents.lindex = 2;
+        Assert.NotEqual(0, drag.QueryGetData(ref contents));
+        contents.lindex = -1;
+        Assert.NotEqual(0, drag.QueryGetData(ref contents));
+    }
+
+    [Fact]
+    public void GetContents_SecondIndex_UsesSecondRemotePath()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        SftpFileInfo[] entries = [FileEntry(), FileEntry() with { Name = "b.txt", FullPath = "/other/b.txt" }];
+        ShellVirtualFileDrag drag = new(browser, entries);
+        FORMATETC contents = Format("FileContents", 1, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        ShellReadStream? stream = null;
+        try
+        {
+            stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+            Assert.Equal("/other/b.txt", proxy.LastRemotePath);
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream?.Dispose();
+        }
+    }
+
+    [Fact]
     public void EnumerateFormats_AdvertisesDescriptorContentsAndInternalMarker()
     {
         ShellVirtualFileDrag drag = CreateDrag();
@@ -120,6 +160,7 @@ public sealed class ShellVirtualFileDragTests
     {
         public bool ProvideContent { get; set; }
         public string? LastPath { get; private set; }
+        public string? LastRemotePath { get; private set; }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
@@ -128,7 +169,8 @@ public sealed class ShellVirtualFileDragTests
                 throw new NotSupportedException();
             }
 
-            LastPath = (string)args![1]!;
+            LastRemotePath = (string)args![0]!;
+            LastPath = (string)args[1]!;
             if (!ProvideContent)
             {
                 return Task.FromException(new FileNotFoundException("remote file"));

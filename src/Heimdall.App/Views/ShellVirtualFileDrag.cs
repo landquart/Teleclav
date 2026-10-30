@@ -8,7 +8,7 @@ using ComDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
 
 namespace Heimdall.App.Views;
 
-/// <summary>Provides one remote file as a Shell virtual file, retaining the internal drag marker.</summary>
+/// <summary>Provides remote files as Shell virtual files, retaining the internal drag marker.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
 public sealed class ShellVirtualFileDrag : ComDataObject
@@ -18,7 +18,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject
     private const int OleEAdvisenotSupported = unchecked((int)0x80040003);
     private readonly byte[] _descriptor;
     private readonly IRemoteBrowser _browser;
-    private readonly SftpFileInfo _file;
+    private readonly IReadOnlyList<SftpFileInfo> _files;
     private readonly short _descriptorFormat = (short)DataFormats.GetDataFormat("FileGroupDescriptorW").Id;
     private readonly short _contentsFormat = (short)DataFormats.GetDataFormat("FileContents").Id;
     private readonly short _internalFormat = (short)DataFormats.GetDataFormat(SftpRemoteDragPayload.FormatName).Id;
@@ -27,8 +27,17 @@ public sealed class ShellVirtualFileDrag : ComDataObject
     internal ShellVirtualFileDrag(IRemoteBrowser browser, SftpFileInfo file)
     {
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
-        _file = file ?? throw new ArgumentNullException(nameof(file));
-        _descriptor = ShellVirtualFileDescriptor.Create(file);
+        ArgumentNullException.ThrowIfNull(file);
+        _files = [file];
+        _descriptor = ShellVirtualFileDescriptor.Create(_files);
+    }
+
+    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<SftpFileInfo> files)
+    {
+        _browser = browser ?? throw new ArgumentNullException(nameof(browser));
+        ArgumentNullException.ThrowIfNull(files);
+        _files = files.ToArray();
+        _descriptor = ShellVirtualFileDescriptor.Create(_files);
     }
 
     internal Exception? TransferError { get; private set; }
@@ -58,14 +67,15 @@ public sealed class ShellVirtualFileDrag : ComDataObject
         medium = default;
         if (format.cfFormat == _contentsFormat)
         {
+            SftpFileInfo fileEntry = _files[format.lindex];
             string directory = Directory.CreateTempSubdirectory("teleclav-drag-").FullName;
             string path = Path.Combine(directory, "content");
             try
             {
                 // The actual browser is captured by the view, including host-key verification.
                 // Run outside the UI synchronization context; no data is read on drag-over.
-                Task.Run(() => _browser.DownloadFileAsync(_file.FullPath, path, overwrite: false)).GetAwaiter().GetResult();
-                if (new FileInfo(path).Length != _file.Size)
+                Task.Run(() => _browser.DownloadFileAsync(fileEntry.FullPath, path, overwrite: false)).GetAwaiter().GetResult();
+                if (new FileInfo(path).Length != fileEntry.Size)
                 {
                     throw new IOException("The remote file changed size during the transfer.");
                 }
@@ -116,7 +126,8 @@ public sealed class ShellVirtualFileDrag : ComDataObject
         if (format.dwAspect != DVASPECT.DVASPECT_CONTENT) { return DvEFormatEtc; }
         if (format.cfFormat == _contentsFormat)
         {
-            return format.lindex == 0 && (format.tymed & TYMED.TYMED_ISTREAM) != 0 ? 0 : DvEFormatEtc;
+            return format.lindex >= 0 && format.lindex < _files.Count
+                && (format.tymed & TYMED.TYMED_ISTREAM) != 0 ? 0 : DvEFormatEtc;
         }
 
         return (format.cfFormat == _descriptorFormat || format.cfFormat == _preferredFormat || format.cfFormat == _internalFormat)
