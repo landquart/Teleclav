@@ -101,4 +101,17 @@ public sealed class ShellFolderPlannerTests
         var file = Item("x", "/d/../secret/x", RemoteEntryKind.File);
         await Assert.ThrowsAsync<IOException>(() => ShellFolderPlanner.PlanAsync([file], (_, _) => throw new Exception("must not list")));
     }
+    [Fact]
+    public async Task Plan_RejectsNegativeFileSize()
+    {
+        var file = Item("bad", "/bad", RemoteEntryKind.File, -1);
+        await Assert.ThrowsAsync<IOException>(() => ShellFolderPlanner.PlanAsync([file], (_, _) => throw new Exception("must not list")));
+    }
+    [Fact]
+    public async Task Plan_RejectsNegativeSizeInsideDirectory()
+    {
+        var root = Item("d", "/d", RemoteEntryKind.Directory);
+        var children = new[] { Item("bad", "/d/bad", RemoteEntryKind.File, -1) };
+        await Assert.ThrowsAsync<IOException>(() => ShellFolderPlanner.PlanAsync([root], (_, _) => Task.FromResult<IReadOnlyList<SftpFileInfo>>(children)));
+    }
 }

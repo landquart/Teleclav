@@ -24,6 +24,8 @@ public static class ShellFolderPlanner
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var root in roots)
         {
+            if (root is not null && root.IsRegularFile && root.Size < 0)
+                throw new IOException("A remote file has an invalid size.");
             if (root is null || !root.FullPath.StartsWith('/')
                 || root.FullPath.Split('/').Skip(1).Any(part => part.Length == 0 || part is "." or "..")
                 || !root.FullPath.EndsWith('/' + root.Name, StringComparison.Ordinal))
@@ -39,6 +41,8 @@ public static class ShellFolderPlanner
                 token.ThrowIfCancellationRequested();
                 if (child is null || child.FullPath != prefix + child.Name)
                     throw new IOException("A remote entry is outside its listed directory.");
+                if (child.IsRegularFile && child.Size < 0)
+                    throw new IOException("A remote file has an invalid size.");
             }
             return children;
         }
