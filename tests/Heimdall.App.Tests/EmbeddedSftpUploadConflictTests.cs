@@ -345,6 +345,36 @@ public sealed class EmbeddedSftpUploadConflictTests
     }
 
     [Fact]
+    public async Task UploadEntriesAsync_MixedUnicodeSelection_PreservesTreeAndEmptyFolders()
+    {
+        using TempDirectory temp = new();
+        string looseFile = Path.Combine(temp.Path, "отчёт.txt");
+        string first = Path.Combine(temp.Path, "проект");
+        string nested = Path.Combine(first, "данные");
+        string empty = Path.Combine(nested, "пусто");
+        string second = Path.Combine(temp.Path, "second");
+        Directory.CreateDirectory(empty);
+        Directory.CreateDirectory(second);
+        string nestedFile = Path.Combine(nested, "é.txt");
+        await File.WriteAllTextAsync(looseFile, "first");
+        await File.WriteAllTextAsync(nestedFile, "second");
+        RecordingRemoteBrowser browser = new();
+        RecordingConflictPresenter presenter = new(_ =>
+            throw new InvalidOperationException("The dialog must not be shown."));
+        EmbeddedSftpViewModel viewModel = CreateViewModel(browser, presenter);
+
+        await viewModel.UploadEntriesAsync([looseFile, first, second], "/srv/target");
+
+        Assert.Contains((looseFile, "/srv/target/отчёт.txt"), browser.UploadCalls);
+        Assert.Contains((nestedFile, "/srv/target/проект/данные/é.txt"), browser.UploadCalls);
+        Assert.Contains("/srv/target/проект/данные/пусто", browser.CreateDirectoryCalls);
+        Assert.Contains("/srv/target/second", browser.CreateDirectoryCalls);
+        Assert.True(File.Exists(looseFile));
+        Assert.True(File.Exists(nestedFile));
+        Assert.Empty(viewModel.TransferJobs);
+    }
+
+    [Fact]
     public async Task UploadEntriesAsync_SymbolicLinkDestination_SkipsUploadAndShowsWarning()
     {
         using TempDirectory temp = new();
@@ -363,6 +393,7 @@ public sealed class EmbeddedSftpUploadConflictTests
 
         Assert.Empty(browser.UploadCalls);
         Assert.Equal(0, presenter.CallCount);
+        Assert.Equal(SftpTransferJobStatus.Failed, Assert.Single(viewModel.TransferJobs).Status);
         Assert.Equal(
             "WarnUploadTargetsSkippedUnsupported",
             viewModel.StatusText);
@@ -444,6 +475,7 @@ public sealed class EmbeddedSftpUploadConflictTests
         Assert.Equal(1, presenter.CallCount);
         Assert.Empty(browser.CreateDirectoryCalls);
         Assert.Empty(browser.UploadCalls);
+        Assert.Equal(SftpTransferJobStatus.Failed, Assert.Single(viewModel.TransferJobs).Status);
     }
 
     [Fact]
@@ -573,6 +605,9 @@ public sealed class EmbeddedSftpUploadConflictTests
 
         Assert.Equal(0, presenter.CallCount);
         Assert.Contains((validFile, "/dst/regular.txt"), browser.UploadCalls);
+        SftpTransferJob job = Assert.Single(viewModel.TransferJobs);
+        Assert.Equal(SftpTransferJobStatus.Failed, job.Status);
+        Assert.Contains(malformedPath, job.Detail, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -655,6 +690,7 @@ public sealed class EmbeddedSftpUploadConflictTests
             Assert.Equal(0, presenter.CallCount);
             Assert.Empty(browser.UploadCalls);
             Assert.Empty(browser.CreateDirectoryCalls);
+            Assert.Equal(SftpTransferJobStatus.Failed, Assert.Single(viewModel.TransferJobs).Status);
             Assert.Equal(
                 "WarnUploadSourcesSkippedReparsePoints",
                 viewModel.StatusText);

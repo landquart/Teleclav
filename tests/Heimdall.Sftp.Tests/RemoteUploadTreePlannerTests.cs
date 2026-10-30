@@ -80,6 +80,34 @@ public sealed class RemoteUploadTreePlannerTests
     }
 
     [Fact]
+    public async Task Plan_MixedRootsAndUnicode_KeepsEveryRelativePathAndEmptyFolder()
+    {
+        FakeLocalTree tree = new();
+        LocalUploadEntry root = new(@"C:\src\проект", "проект", IsDirectory: true);
+        LocalUploadEntry nested = new(@"C:\src\проект\данные", "данные", IsDirectory: true);
+        LocalUploadEntry empty = new(@"C:\src\проект\данные\пусто", "пусто", IsDirectory: true);
+        LocalUploadEntry nestedFile = new(@"C:\src\проект\данные\é.txt", "é.txt", IsDirectory: false);
+        LocalUploadEntry looseFile = new(@"C:\src\отчёт.txt", "отчёт.txt", IsDirectory: false);
+        LocalUploadEntry secondRoot = new(@"C:\src\second", "second", IsDirectory: true);
+        tree.AddDirectory(root.FullPath, nested);
+        tree.AddDirectory(nested.FullPath, empty, nestedFile);
+        tree.AddDirectory(empty.FullPath);
+        tree.AddDirectory(secondRoot.FullPath);
+
+        IReadOnlyList<RemoteUploadOp> ops = await RemoteUploadTreePlanner.PlanAsync(
+            [looseFile, root, secondRoot], "/srv/target", tree.EnumerateChildrenAsync);
+
+        Assert.Collection(
+            ops,
+            op => AssertUpload(op, looseFile.FullPath, "/srv/target/отчёт.txt"),
+            op => AssertMkDir(op, "/srv/target/проект"),
+            op => AssertMkDir(op, "/srv/target/проект/данные"),
+            op => AssertMkDir(op, "/srv/target/проект/данные/пусто"),
+            op => AssertUpload(op, nestedFile.FullPath, "/srv/target/проект/данные/é.txt"),
+            op => AssertMkDir(op, "/srv/target/second"));
+    }
+
+    [Fact]
     public async Task Plan_UnsafeChildName_ThrowsIOException()
     {
         FakeLocalTree tree = new FakeLocalTree();
