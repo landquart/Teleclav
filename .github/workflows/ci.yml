@@ -30,6 +30,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Measures the bytes of the indexed blobs, not only the `i/` column of
       # `git ls-files --eol`: a blob git classes binary from its content (a lone
@@ -204,6 +206,14 @@ jobs:
           ./scripts/Test-NpmAuditVerdict.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # Fail on broken solution references, lock files, missing notices or changed terminal assets.
+      # This structural gate does not replace an independent license review.
+      - name: Check repository integrity gate
+        run: python -m unittest discover -s tests/infrastructure -v
+
+      - name: Check project files and license notices
+        run: python scripts/check_repository_integrity.py
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -220,6 +230,41 @@ jobs:
 
       - name: Build
         run: dotnet build Heimdall.slnx --no-restore -c Release
+
+      # The Standard edition is self-contained for .NET; the free WebView2
+      # Evergreen runtime must already be installed on the destination machine.
+      - name: Restore portable runtime in locked mode
+        run: >
+          dotnet restore src/Heimdall.App/Heimdall.App.csproj
+          -r win-x64 --locked-mode -p:SelfContained=true
+
+      - name: Publish portable Windows x64
+        run: >
+          dotnet publish src/Heimdall.App/Heimdall.App.csproj
+          -c Release -r win-x64 --self-contained true --no-restore
+          -p:PublishSingleFile=false -p:HeimdallEdition=Standard
+          -o artifacts/portable
+
+      - name: Package portable distribution
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'artifacts/portable/Heimdall.exe')) { throw 'Published application is missing.' }
+          Copy-Item LICENSE,THIRD-PARTY-NOTICES.md artifacts/portable/
+          New-Item -ItemType Directory -Path artifacts/portable/test-tools | Out-Null
+          Copy-Item scripts/drag_drop_fixture.py,scripts/Compare-DragDropManifest.ps1,docs/DRAG_DROP_ACCEPTANCE.md artifacts/portable/test-tools/
+          Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/Teleclav-portable-win-x64.zip
+          (Get-FileHash artifacts/Teleclav-portable-win-x64.zip -Algorithm SHA256).Hash |
+            Set-Content artifacts/Teleclav-portable-win-x64.sha256
+
+      - name: Upload portable distribution
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Teleclav-portable-win-x64
+          path: |
+            artifacts/Teleclav-portable-win-x64.zip
+            artifacts/Teleclav-portable-win-x64.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       # The logic the committed milkdown bundle is built from (when a note counts as edited,
       # how a [[note link]] is written back to the file) runs under node's own test runner.

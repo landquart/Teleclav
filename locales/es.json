@@ -1586,6 +1586,7 @@
   "WarnRemoteEntriesSkippedUnsupported": "Se omitieron {0} entradas que no son ni archivos ni directorios. Consulta el registro para más detalles.",
   "WarnUploadTargetsSkippedUnsupported": "Se omitieron {0} subidas: el destino ya existe y no es un archivo normal. Consulta el registro para más detalles.",
   "WarnUploadTargetsSkippedUnsupportedOne": "Se omitió {0} subida: el destino ya existe y no es un archivo normal. Consulta el registro para más detalles.",
+  "WarnUploadSourcesNotTransferred": "Algunos elementos seleccionados no se transfirieron:",
   "WarnUploadSourcesSkippedReparsePoints": "Se omitieron {0} enlaces locales, seleccionados como origen de subida o encontrados dentro del árbol seleccionado. Consulta el registro para más detalles.",
   "WarnUploadSourcesSkippedReparsePointsOne": "Se omitió {0} enlace local, seleccionado como origen de subida o encontrado dentro del árbol seleccionado. Consulta el registro para más detalles.",
   "WarnRemoteReplacementNonAtomic": "El destino \"{0}\" se reemplazó sin garantía atómica.",

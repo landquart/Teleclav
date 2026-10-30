@@ -668,6 +668,26 @@ public sealed partial class EmbeddedSftpViewModel
                     "WarnUploadSourcesSkippedReparsePoints",
                     outcome.SkippedLocalReparsePoints.Count));
             }
+
+            if (outcome.Completed && outcome.SkippedSources.Count > 0)
+            {
+                pendingOperationWarnings.Add(
+                    L10n("WarnUploadSourcesNotTransferred") + Environment.NewLine
+                    + string.Join(Environment.NewLine, outcome.SkippedSources));
+            }
+
+            if (pendingOperationWarnings.Count > 0)
+            {
+                status = SftpTransferJobStatus.Failed;
+                detail = string.Join(Environment.NewLine, pendingOperationWarnings);
+                IEnumerable<string> refusedPaths = outcome.SkippedUnsupportedTargets
+                    .Concat(outcome.SkippedLocalReparsePoints);
+                string refusedPathDetails = string.Join(Environment.NewLine, refusedPaths);
+                if (refusedPathDetails.Length > 0)
+                {
+                    detail += Environment.NewLine + refusedPathDetails;
+                }
+            }
         }
         catch (OperationCanceledException)
         {

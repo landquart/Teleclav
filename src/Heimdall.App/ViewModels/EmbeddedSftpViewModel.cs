@@ -71,7 +71,8 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
     internal readonly record struct UploadPlanOutcome(
         bool Completed,
         IReadOnlyList<string> SkippedUnsupportedTargets,
-        IReadOnlyList<string> SkippedLocalReparsePoints);
+        IReadOnlyList<string> SkippedLocalReparsePoints,
+        IReadOnlyList<string> SkippedSources);
 
     /// <summary>Identity of the column the listing is sorted by until the user picks another.</summary>
     internal const string SortColumnName = "Name";
@@ -1391,13 +1392,15 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
     {
         List<string> skippedUnsupportedTargets = [];
         List<string> skippedLocalReparsePoints = [];
+        List<string> skippedSources = [];
 
         if (_browser is null)
         {
             return new UploadPlanOutcome(
                 false,
                 skippedUnsupportedTargets,
-                skippedLocalReparsePoints);
+                skippedLocalReparsePoints,
+                skippedSources);
         }
 
         List<LocalUploadEntry> roots = new(localPaths.Count);
@@ -1413,6 +1416,7 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             FileAttributes? attributes = isDirectory || isFile
                 ? ReadLocalRootAttributesOrNullIfMissing(path, File.GetAttributes)
                 : null;
+            int linkCount = skippedLocalReparsePoints.Count;
             LocalUploadEntry? root = ClassifyLocalUploadRoot(
                 path,
                 isDirectory,
@@ -1421,8 +1425,14 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
                 skippedLocalReparsePoints);
             if (root is null)
             {
-                // Skip paths that no longer exist; a drop can race a delete on the source side.
-                // A refused reparse root also lands here, already counted and logged.
+                // A source can disappear or become inaccessible after the drop. Keep the
+                // remaining selection, but do not report the overall batch as successful.
+                // Reparse points have their own warning and must not be followed.
+                if (skippedLocalReparsePoints.Count == linkCount)
+                {
+                    skippedSources.Add(path);
+                }
+
                 continue;
             }
 
@@ -1434,7 +1444,8 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             return new UploadPlanOutcome(
                 true,
                 skippedUnsupportedTargets,
-                skippedLocalReparsePoints);
+                skippedLocalReparsePoints,
+                skippedSources);
         }
 
         // The tree walk is synchronous filesystem work and can be arbitrarily slow on a network
@@ -1471,7 +1482,8 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             return new UploadPlanOutcome(
                 true,
                 skippedUnsupportedTargets,
-                skippedLocalReparsePoints);
+                skippedLocalReparsePoints,
+                skippedSources);
         }
 
         IReadOnlyList<FileConflictAnalysisItem> conflictAnalysis = FileConflictPlanner.Analyze(
@@ -1502,7 +1514,8 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
                 return new UploadPlanOutcome(
                     false,
                     skippedUnsupportedTargets,
-                    skippedLocalReparsePoints);
+                    skippedLocalReparsePoints,
+                    skippedSources);
             }
 
             decisions = dialogResult.Decisions;
@@ -1531,6 +1544,7 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             ct.ThrowIfCancellationRequested();
             if (resolved.Action == FileConflictEffectiveAction.Skip)
             {
+                skippedSources.Add(plannedOps[resolved.Index].LocalPath);
                 continue;
             }
 
@@ -1585,7 +1599,8 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
         return new UploadPlanOutcome(
             true,
             skippedUnsupportedTargets,
-            skippedLocalReparsePoints);
+            skippedLocalReparsePoints,
+            skippedSources);
     }
 
     /// <summary>The size of a local file, or zero when it cannot be read (it is then sent unmeasured).</summary>
