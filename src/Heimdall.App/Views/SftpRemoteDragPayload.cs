@@ -24,12 +24,9 @@ namespace Heimdall.App.Views;
 /// What a drag out of the remote file list carries: the entries and the pane they come from.
 /// </summary>
 /// <remarks>
-/// The payload travels inside the application only. A drop target in another process finds none of
-/// the formats it knows how to read, so such a drop stays refused; carrying remote entries to the
-/// Windows shell would mean streaming them as virtual files, which is a separate piece of work.
-/// Inside the application the payload lets a folder row of the same list receive a move, and a
-/// local file browser receive a download, without the entries ever being written to a temporary
-/// folder first.
+/// The payload remains inside the application. For a single regular file the Shell adapter also
+/// advertises virtual-file formats externally; this marker preserves internal moves and downloads.
+/// For other selections the original application-only drag object is used.
 /// </remarks>
 /// <param name="Source">The view model of the pane the drag started in.</param>
 /// <param name="Entries">The dragged remote entries.</param>
@@ -37,12 +34,16 @@ public sealed record SftpRemoteDragPayload(
     EmbeddedSftpViewModel Source,
     IReadOnlyList<SftpFileInfo> Entries)
 {
+    // A Shell drag carries the same marker through COM; its managed source remains local.
+    [ThreadStatic]
+    internal static SftpRemoteDragPayload? ActiveShellDrag;
+
     /// <summary>The data format name the payload is stored under.</summary>
     public const string FormatName = "Heimdall.SftpRemoteEntries";
 
     /// <summary>Reads the payload from a drag, or <see langword="null"/> when the drag carries none.</summary>
     public static SftpRemoteDragPayload? From(System.Windows.IDataObject? data)
         => data is not null && data.GetDataPresent(FormatName)
-            ? data.GetData(FormatName) as SftpRemoteDragPayload
+            ? ActiveShellDrag ?? data.GetData(FormatName) as SftpRemoteDragPayload
             : null;
 }
