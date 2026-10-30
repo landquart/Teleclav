@@ -69,3 +69,70 @@
 ## Блокирующие риски и ограничения
 
 Внешний исходящий D отсутствует; реальная Windows-сборка, реальные SFTP и UI/Explorer не проверены; состояние лицензирования полного набора компонентов и отсутствие обязательных сетевых обращений не подтверждены; контроль целостности передачи по хешу не установлен. Без этих данных заявлять готовность 1.0 нельзя. Оценка охватывает указанные цепочки и ключевые конфигурации, а не формальную проверку каждой строки и каждой транзитивной зависимости репозитория.
+
+## Дополнение аудита: результаты Windows CI на исходном SHA
+
+Проверен журнал job [build-and-test](https://github.com/VBlackJack/Heimdall/actions/runs/40883016529) в upstream на Windows runner. В этом историческом запуске фактически выполнены locked restore, Debug и Release build и тесты; оба build сообщили `Build succeeded`. В журнале обязательной группы восемь итогов test runner: 90, 4953, 535, 642, 142, 576, 246 и 11948 тестов, каждая группа завершилась `Test Run Successful`. Это число тестовых результатов, а не количество вручную проверенных сценариев и не доказательство работы с Explorer. Наличие skipped отдельных тестов по этим суммарным строкам не исключается.
+
+Журнал отчёта информационных групп указал 49 результатов `CIUnstable` и 215 `RequiresDesktop`, 264 результата без ошибок; RequiresDesktop runner сообщил 215 passed. Проверка NuGet на момент запуска сообщила отсутствие обнаруженных уязвимых зависимостей в 18 проектах. npm-аудит выдал предупреждение об одном advisory с уровнем ниже high. Эти результаты относятся к состоянию базы уязвимостей и инструментов 29.10.2026, а не гарантируют отсутствие уязвимостей сейчас. TRX и coverage — артефакты указанного запуска с ограниченным сроком хранения. Самостоятельный запуск в этой среде не выполнен. В форке Teleclav запусков на момент проверки не было; установку и релизную сборку Teleclav на Windows 11 не проверяли.
+
+## Уточнённые дефекты, ограничения и действия
+
+| ID | Наблюдение и исходник | Последствие и необходимое действие |
+|---|---|---|
+| D01 | `EmbeddedSftpView.xaml.cs:StartRemoteDrag` помещает в DataObject только `SftpRemoteDragPayload.FormatName`; комментарий `SftpRemoteDragPayload.cs` явно ограничивает его одним процессом. | Explorer не получает поддерживаемый формат: сделать Shell-адаптер и доказать сценарий отдельно от внутренней загрузки. |
+| D02 | `EmbeddedSftpViewModel.Transfers.cs:ExecuteDownloadJobAsync`: после предупреждений о `SkippedUnsupportedPaths` и `SkippedUnsafeNames` возвращается `SftpTransferJobStatus.Completed`; upload также устанавливает Completed при некоторых пропусках и выдаёт предупреждение. | Частично переданное дерево может отображаться завершённым. Добавить различимый частичный итог с перечнем путей, обеспечить, чтобы полный успех означал отсутствие пропусков. Наличие предупреждения не устраняет противоречие с R08/R13. |
+| D03 | `RemoteUploadTreePlanner.MaxUploadDepth = 256`; download использует тот же предел. Путь на уровне свыше этого значения вызывает IOException. | При достаточно глубоком дереве нет неограниченной рекурсии; документировать границу, проверить до записи/проанализировать целесообразность предела. Windows path limits также важны. |
+| D04 | `LocalDownloadPath`, `SftpPathGuard`, планировщик download и перечисление upload исключают опасные имена и неподдерживаемые типы; upload сообщает о local reparse points. | Полный перенос всех объектов не гарантирован. Специальные типы нельзя разыменовывать по умолчанию, пользователю нужны полный перечень и частичный результат. |
+| D05 | `SshHandler.cs` комментирует, что изменение размера после старта на ветке Plink pipe недоступно; основной `SshShellSession` использует SSH.NET ShellStream. | R05 требует изменения размера терминала. Проверить все доступные пути и либо устранить ограничение Plink, либо явно не включать этот путь в принимаемый функционал; проверить key/agent режимы. |
+| D06 | `AppSettings.UpdateCheckEnabled` по умолчанию true; `UpdateSource.cs` указывает `VBlackJack`, клиент использует GitHub API. | Это необязательно телеметрия, но выпуск форка может обращаться к upstream и проверять не тот продукт. Разделить идентичность и источник обновлений Teleclav, обеспечить явно необязательную сетевую функцию; провести offline и сетевой тест. |
+| D07 | `THIRD-PARTY-NOTICES.md` заявляет для тестов версии coverlet 6.0.4/10.0.1, тогда как все восемь тестовых csproj указывают 10.1.0. | Уведомления устарели относительно исходников; независимо перепроверить лицензии и версии всех распространяемых и тестовых зависимостей, включая закрытые WebView2 SDK и runtime. |
+| D08 | Нет установленной по прочитанной цепочке проверки файла по SHA-256 в UI (`SftpBrowser`, transfer ViewModel); staged commit — иной механизм. | Не утверждать, что R12 реализовано. Спроектировать явную сквозную проверку и зафиксировать, что сравнение локального и удалённого содержимого не полагается на необязательное расширение SFTP. |
+
+## Состав проектов и границы ответственности
+
+| Компонент | Роль и связь с выпуском | Риск/проверка |
+|---|---|---|
+| Heimdall.App | WPF composition root; файловые панели, обработчики drag, очередь, SSH view, диалоги, WebView2 и ресурсы; прямые ссылки на все остальные библиотеки. | Большой монолит, синхронные участки UI и сторонние WebView assets; необходимы испытания диспетчера и границ веб-содержимого. |
+| Heimdall.Core | Общие модели, конфигурация, host-key контракты, криптография, обновление, логирование. | Глобальное состояние `CredentialProtector`; секреты необходимо проверять на всех путях и при миграции. |
+| Heimdall.Ssh | SSH.NET connection factory, предварительная проверка host key, shell и tunnels, Plink fallback. | Разные реализации аутентификации и проверки требуют отдельных тестов, в т.ч. изменённый ключ и resize. |
+| Heimdall.Sftp | SFTP через SSH.NET, FTP через FluentFTP, планирование деревьев, файловые операции, конфликты. | Не весь функционал пакета нужен SSH/SFTP, но прямое удаление FTP требует отдельного анализа связей. |
+| Heimdall.Terminal | Локальный terminal/ConPTY и Plink pipe вспомогательные реализации, контракт с Core. | Наивное удаление затронет fallback и другие функции App. |
+| TwinShell.Core | Доменные типы и контракты подсистемы командной библиотеки, WPF и ссылка на Core. | Прямая ссылка App: независимость от Teleclav SSH не означает возможности удалить без последствий. |
+| TwinShell.Persistence | Хранение команд и состояния, EF Core SQLite, ссылки на Core и TwinShell.Core. | Схема/путь данных и миграции при смене идентичности. |
+| TwinShell.Infrastructure | Реализации сервисов и синхронизации, JSON/YAML/git, зависит от TwinShell.Core/Persistence. | Внешняя git-синхронизация и дополнительные зависимости должны быть необязательны. |
+| Heimdall.Rdp | Существующая библиотека RDP, напрямую требуется App по csproj. | Не входит в минимальный SSH/SFTP-сценарий, но не удалять до анализа сборочных и runtime зависимостей. |
+
+## Детали безопасности
+
+`SshConnectionFactory` сначала разрешает доверие host key, а для настоящего соединения навешивает `HostKeyReceived` с фиксированным `PinnedFingerprintVerifier`; SFTP и `SshShellSession` используют этот механизм. Есть альтернативная ветка Plink со своей проверкой и уборкой временного файла пароля (`SshHandler.cs`, `Heimdall.Ssh/Plink`). Отдельно тестировать TOFU, mismatch, смену ключа между предварительной проверкой и подключением, туннели, SFTP и fallback; существование тестов не является полной проверкой безопасности.
+
+`CredentialProtector.cs`: обычный режим использует Windows DPAPI с HMAC при настроенном ключе и поддерживает legacy-данные; опциональное хранилище с master password использует ключ vault, блокирует запись при закрытом vault вместо понижения защиты. `VaultLifecycleService` указывает Argon2id; реализация blob — AES-GCM. Из этого не следует защита от другого процесса в том же профиле или отсутствие секретов в логах. Проверять все credential providers, lifetime, экспорты, crash-остатки, их ACL и журналы. `EmbeddedSshView` ограничивает навигацию и входящие WebView-сообщения; проверка защищённости границы WebView остаётся задачей отдельного обзора.
+
+## Практический протокол приёмки A–G
+
+На Windows 11 Explorer и Teleclav запустить с одинаковым уровнем прав; подключить отдельную Ubuntu OpenSSH-среду без производственных данных. Подготовить файл с нулевым размером, бинарный файл, Unicode-имя, файл ≥1 ГиБ и дерево `root/empty`, `root/sub/file`, два выделенных объекта и папку назначения. Для A–D отдельно физически выполнить drag файла, набора и дерева; для E–G повторить в папку под указателем и сравнить результат с независимым manifest путей, размеров и SHA-256, в том числе пустые папки. Для D также проверить фон Explorer и строку папки. Указать версию Windows, режим запуска, настройки OpenSSH, hash манифеста, точный статус и снимок лога. Повторить с конфликтами и отказами прав, отменой во время перечисления/передачи, отключением сети, нехваткой места и недопустимым именем. После отказа зафиксировать состояние источника, существующей цели и временных файлов; не утверждать атомарность всего дерева. Проверить специальные типы и глубину отдельно. Ни один такой сценарий в данном аудите фактически не исполнялся.
+
+## Полный перечень прямых NuGet-ссылок в проектах
+
+Значения извлечены из `PackageReference` файлов проектов на исходном SHA; транзитивные версии и хеши — в соответствующих `packages.lock.json`, а не в этой таблице. Такая инвентаризация не доказывает лицензии или отсутствие уязвимостей.
+
+| Проект | Прямые пакеты и версии |
+|---|---|
+| `Heimdall.App` | AvalonEdit 6.3.1.120, CommunityToolkit.Mvvm 8.4.0, Microsoft.Extensions.DependencyInjection 10.0.14, System.Management 10.0.14, ThemeForge.Theme 2.1.0 |
+| `Heimdall.Core` | CommunityToolkit.Mvvm 8.4.0, Konscious.Security.Cryptography.Argon2 1.3.1, Microsoft.Extensions.DependencyInjection.Abstractions 10.0.14, System.Security.Cryptography.ProtectedData 10.0.14 |
+| `Heimdall.Rdp` | нет прямых NuGet-ссылок |
+| `Heimdall.Sftp` | FluentFTP 54.2.0, SSH.NET 2026.0.0 |
+| `Heimdall.Ssh` | SSH.NET 2026.0.0 |
+| `Heimdall.Terminal` | нет прямых NuGet-ссылок |
+| `TwinShell.Core` | нет прямых NuGet-ссылок |
+| `TwinShell.Infrastructure` | JsonSchema.Net 7.0.4, LibGit2Sharp 0.31.0, YamlDotNet 16.3.0 |
+| `TwinShell.Persistence` | Microsoft.EntityFrameworkCore.Sqlite 10.0.14, Microsoft.Extensions.Caching.Memory 10.0.14, SQLitePCLRaw.bundle_e_sqlite3 3.0.5 |
+| `Heimdall.App.Tests` | coverlet.collector 10.1.0, FluentAssertions 6.12.2, Microsoft.NET.Test.Sdk 17.14.1, Microsoft.Extensions.TimeProvider.Testing 10.8.0, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `Heimdall.App.UiTests` | coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4, Xunit.StaFact 1.1.11, FlaUI.Core 5.0.0, FlaUI.UIA3 5.0.0 |
+| `Heimdall.Core.Tests` | coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `Heimdall.Rdp.Tests` | coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `Heimdall.Sftp.Tests` | coverlet.collector 10.1.0, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `Heimdall.Ssh.Tests` | coverlet.collector 10.1.0, Microsoft.Extensions.TimeProvider.Testing 10.8.0, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `Heimdall.Terminal.Tests` | coverlet.collector 10.1.0, FluentAssertions 6.12.2, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
+| `TwinShell.Infrastructure.Tests` | coverlet.collector 10.1.0, FluentAssertions 6.12.2, Microsoft.EntityFrameworkCore.Sqlite 10.0.14, Microsoft.Extensions.Caching.Memory 10.0.14, Microsoft.Extensions.Logging.Abstractions 10.0.14, Microsoft.NET.Test.Sdk 17.14.1, xunit 2.9.3, xunit.runner.visualstudio 3.1.4 |
