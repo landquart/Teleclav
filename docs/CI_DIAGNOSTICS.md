@@ -13,8 +13,19 @@ Baseline: integration/drag-drop-acceptance at `8010d81b7f1c48887a17ab33de2df3616
 - Existing mandatory test step excludes CIUnstable and RequiresDesktop; separate informational steps use continue-on-error. TRX upload also ignores missing files. The isolated OpenSSH test requires explicit server configuration and skips without it.
 - The repository integrity check verifies existence of notices and selected asset hashes, not license compatibility. Portable publishing checks the executable and writes a hash but does not verify all ZIP content or launch the program.
 - In Ubuntu 24.04, the infrastructure suite passed 7 tests and the repository integrity script passed. SDK 10.0.103 was downloaded; the installer reported ownership errors during extraction, although dotnet --info worked. A locked restore of tests/Heimdall.Core.Tests/Heimdall.Core.Tests.csproj passed with NUGET_PACKAGES set to a Linux path. This does not prove solution restore or Windows/portable restore succeeds.
-- Full Core test execution and TRX analysis are in progress. Earlier reports of 195 Linux failures are historical, not a classification. No portable artifact was produced in this investigation.
+- Core Linux run: 4,758 passed, 195 failed, none skipped; TRX generated. [Individual failures and provisional message-based categories](CI_CORE_LINUX_FAILURES.md) do not substitute for root-cause analysis. Three typography guard failures were fixed (audit, acceptance document and French locale); the relevant 21-test suite passed after fixes. The full suite has not yet been rerun after the fixes. No portable artifact was produced in this investigation.\n- A draft PR was opened against the integration branch; querying PR-triggered runs for its initial and subsequent heads returned none. The reason remains unverified.
 
 ## Still required
 
 Determine the actual Actions configuration with authorized access and demonstrate a successful Windows run; inspect every failed test with TRX; investigate locked restore separately for Windows and self-contained win-x64; implement and regression-test necessary fixes; verify ZIP contents and retain checksums and TRX. Do not merge based on this checkpoint.
+
+## Commands used on Linux
+
+```sh
+python -m unittest discover -s tests/infrastructure -v
+python scripts/check_repository_integrity.py
+NUGET_PACKAGES=/tmp/teleclav-nuget dotnet restore tests/Heimdall.Core.Tests/Heimdall.Core.Tests.csproj --locked-mode
+NUGET_PACKAGES=/tmp/teleclav-nuget dotnet test tests/Heimdall.Core.Tests/Heimdall.Core.Tests.csproj --no-restore --logger 'trx;LogFileName=core-linux.trx' --results-directory /tmp/teleclav-results
+```
+
+The original Core TRX was generated locally and is not a GitHub Actions artifact. It contains test names, messages and stacks; the checked-in failure list preserves names and first error lines only. More evidence and a Windows run are still required. For Windows build and portable publish commands see [BUILDING.md](BUILDING.md); those commands are documented, not verified in this run.
