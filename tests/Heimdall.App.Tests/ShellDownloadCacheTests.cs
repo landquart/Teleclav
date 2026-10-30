@@ -7,6 +7,31 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task Timeout_StopsWaitingAndCancelsDownloadButRetainsActiveStaging()
+    {
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken downloadToken = default;
+        var cache = new ShellDownloadCache(2, async (_, path, ct) =>
+        {
+            downloadToken = ct;
+            started.SetResult();
+            await finish.Task;
+            await File.WriteAllTextAsync(path, "ok");
+        }, TimeSpan.FromSeconds(2));
+        string directory = cache.DirectoryPath;
+        try
+        {
+            Task<Stream> pending = cache.OpenAsync(0, 2, CancellationToken.None);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.ThrowsAsync<TimeoutException>(() => pending);
+            Assert.True(downloadToken.IsCancellationRequested);
+            Assert.True(Directory.Exists(directory));
+        }
+        finally { finish.SetResult(); cache.Dispose(); }
+    }
+
+    [Fact]
     public async Task Dispose_UnblocksWaiterEvenIfDownloadDoesNotObserveCancellation()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

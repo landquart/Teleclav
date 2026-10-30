@@ -2247,7 +2247,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             catch (Exception ex)
             {
                 folderPreparationFailed = true;
-                if (!_disposed) { _viewModel.ShowOperationWarning(ex.Message); }
+                if (!_disposed) { ShowShellTransferFailure(ex); }
             }
             finally
             {
@@ -2267,27 +2267,27 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
                 if (!_shellTransfers.Add(cancel)) { shell.Cancel(); return; }
                 shell.AsyncFailure = failure => Dispatcher.BeginInvoke(() =>
                 {
-                    if (!_disposed) { _viewModel.ShowOperationWarning(failure.Message); }
+                    if (!_disposed) { ShowShellTransferFailure(failure); }
                 });
                 SftpRemoteDragPayload.ActiveShellDrag = payload;
                 started = true;
                 shell.Start();
                 if (shell.TransferError is { } failure)
                 {
-                    _viewModel.ShowOperationWarning(failure.Message);
+                    ShowShellTransferFailure(failure);
                 }
             }
             catch (ArgumentException ex)
             {
-                _viewModel.ShowOperationWarning(ex.Message);
+                ShowShellTransferFailure(ex);
             }
             catch (System.Runtime.InteropServices.COMException ex)
             {
-                _viewModel.ShowOperationWarning(ex.Message);
+                ShowShellTransferFailure(ex);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Security.SecurityException)
             {
-                _viewModel.ShowOperationWarning(L("SftpStatusTransferFailed"));
+                ShowShellTransferFailure(ex);
                 return;
             }
             finally
@@ -2318,6 +2318,9 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             DragOverlay.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void ShowShellTransferFailure(Exception error)
+        => _viewModel.ShowOperationWarning(L(ShellTransferFailure.MessageKey(error)));
 
     // ------------------------------------------------------------------
     // Listing replacement: keep the scroll position and the selection

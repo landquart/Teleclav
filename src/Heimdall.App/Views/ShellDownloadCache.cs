@@ -11,17 +11,21 @@ internal sealed class ShellDownloadCache : IDisposable
     private readonly Func<int, string, CancellationToken, Task> _download;
     private readonly CancellationTokenSource _stop = new();
     private readonly long _limit;
+    private readonly TimeSpan _waitLimit;
     private long _reserved;
     private int _readers;
     private int _downloads;
     private bool _disposed;
     private bool _cleaned;
 
-    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download)
+    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _download = download ?? throw new ArgumentNullException(nameof(download));
         _limit = limit;
+        _waitLimit = waitLimit ?? TimeSpan.FromHours(24);
+        if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
+            throw new ArgumentOutOfRangeException(nameof(waitLimit));
         DirectoryPath = ShellStagingDirectory.Create();
     }
 
@@ -56,7 +60,13 @@ internal sealed class ShellDownloadCache : IDisposable
         }
 
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
-        string savedPath = await entry.Download.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
+        string savedPath;
+        try { savedPath = await entry.Download.WaitAsync(_waitLimit, waitCancellation.Token).ConfigureAwait(false); }
+        catch (TimeoutException)
+        {
+            Dispose();
+            throw;
+        }
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);

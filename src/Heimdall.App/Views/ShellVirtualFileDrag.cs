@@ -172,7 +172,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             catch (Exception ex)
             {
                 Interlocked.CompareExchange(ref _transferError, ex, null);
-                throw;
+                throw ShellTransferFailure.ToComException(ex);
             }
 
             return;

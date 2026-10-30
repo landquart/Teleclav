@@ -27,7 +27,11 @@ public sealed class ShellStagingDirectoryTests
             AssertOnlyAllowed(security, allowed);
             string filePath = Path.Combine(path, "test");
             File.WriteAllText(filePath, "test");
-            AssertOnlyAllowed(new FileInfo(filePath).GetAccessControl(), allowed);
+            FileSecurity fileSecurity = new FileInfo(filePath).GetAccessControl();
+            AssertOnlyAllowed(fileSecurity, allowed);
+            Assert.Contains(fileSecurity.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
+                rule => rule.IdentityReference.Equals(user) && rule.AccessControlType == AccessControlType.Deny
+                    && (rule.FileSystemRights & FileSystemRights.ExecuteFile) != 0);
         }
         finally { Directory.Delete(path, recursive: true); }
     }

@@ -37,6 +37,10 @@ internal static class ShellStagingDirectory
                      new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
             security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, inheritance,
                 PropagationFlags.None, AccessControlType.Allow));
+        // Files remain readable and writable but are not executable by the current user.
+        // This does not constrain administrators or an owner who changes the ACL.
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.ExecuteFile,
+            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny));
 
         byte[] descriptor = security.GetSecurityDescriptorBinaryForm();
         GCHandle pinned = GCHandle.Alloc(descriptor, GCHandleType.Pinned);

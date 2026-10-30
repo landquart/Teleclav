@@ -12,6 +12,7 @@ public sealed class ShellReadStream : IStream, IDisposable
 {
     private readonly Stream _stream;
     private readonly string? _directory;
+    private readonly object _gate = new();
 
     public ShellReadStream(FileStream stream, string directory) { _stream = stream; _directory = directory; }
     internal ShellReadStream(Stream stream) { _stream = stream; }
@@ -21,9 +22,12 @@ public sealed class ShellReadStream : IStream, IDisposable
 
     public void Dispose()
     {
-        if (_disposed) { return; }
-        _disposed = true;
-        try { _stream.Dispose(); } catch (IOException) { }
+        lock (_gate)
+        {
+            if (_disposed) { return; }
+            _disposed = true;
+            try { _stream.Dispose(); } catch (IOException) { }
+        }
         if (_directory is not null)
         {
             try { Directory.Delete(_directory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
@@ -33,44 +37,50 @@ public sealed class ShellReadStream : IStream, IDisposable
 
     public void Read(byte[] buffer, int count, IntPtr read)
     {
-        int n = _stream.Read(buffer, 0, count);
+        int n;
+        lock (_gate) { n = _stream.Read(buffer, 0, count); }
         if (read != IntPtr.Zero) { Marshal.WriteInt32(read, n); }
     }
 
     public void Seek(long move, int origin, IntPtr position)
     {
-        long n = _stream.Seek(move, (SeekOrigin)origin);
+        long n;
+        lock (_gate) { n = _stream.Seek(move, (SeekOrigin)origin); }
         if (position != IntPtr.Zero) { Marshal.WriteInt64(position, n); }
     }
 
     public void Stat(out STATSTG stat, int flags)
     {
-        stat = new STATSTG { type = 2, cbSize = _stream.Length };
+        lock (_gate) { stat = new STATSTG { type = 2, cbSize = _stream.Length }; }
     }
 
     public void CopyTo(IStream target, long count, IntPtr read, IntPtr written)
     {
         byte[] buffer = new byte[81920];
-        long total = 0;
+        long totalRead = 0;
+        long totalWritten = 0;
         IntPtr amount = Marshal.AllocCoTaskMem(sizeof(int));
         try
         {
-            while (total < count)
+            while (totalRead < count)
             {
-                int n = _stream.Read(buffer, 0, (int)Math.Min(buffer.Length, count - total));
+                int n;
+                lock (_gate) { n = _stream.Read(buffer, 0, (int)Math.Min(buffer.Length, count - totalRead)); }
                 if (n == 0) { break; }
+                totalRead += n;
                 Marshal.WriteInt32(amount, 0);
                 target.Write(buffer, n, amount);
                 int actual = Marshal.ReadInt32(amount);
+                if (actual < 0 || actual > n) { throw new IOException("The destination reported an invalid byte count."); }
+                totalWritten += actual;
                 if (actual != n) { throw new IOException("The destination did not accept all bytes."); }
-                total += actual;
             }
         }
         finally
         {
             Marshal.FreeCoTaskMem(amount);
-            if (read != IntPtr.Zero) { Marshal.WriteInt64(read, total); }
-            if (written != IntPtr.Zero) { Marshal.WriteInt64(written, total); }
+            if (read != IntPtr.Zero) { Marshal.WriteInt64(read, totalRead); }
+            if (written != IntPtr.Zero) { Marshal.WriteInt64(written, totalWritten); }
         }
     }
 
