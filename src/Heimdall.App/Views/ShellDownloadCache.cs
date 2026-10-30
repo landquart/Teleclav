@@ -35,6 +35,7 @@ internal sealed class ShellDownloadCache : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!_entries.TryGetValue(index, out entry!))
             {
                 if (size > _limit - _reserved)
