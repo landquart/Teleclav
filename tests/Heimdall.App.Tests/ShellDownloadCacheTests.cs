@@ -7,6 +7,34 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task AlreadyCancelledRequest_DoesNotStartDownload()
+    {
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.OpenAsync(0, 2, stop.Token));
+        using Stream stream = await cache.OpenAsync(1, 2, CancellationToken.None);
+        Assert.Equal('o', stream.ReadByte());
+    }
+
+    [Fact]
+    public async Task RepeatedCompletedTransfers_RemoveTheirCacheDirectories()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+            string directory = cache.DirectoryPath;
+            using (Stream stream = await cache.OpenAsync(0, 2, CancellationToken.None))
+            {
+                Assert.Equal('o', stream.ReadByte());
+            }
+            cache.Dispose();
+            Assert.False(Directory.Exists(directory));
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentRequests_ShareDownloadButHaveIndependentReaders()
     {
         int count = 0;
