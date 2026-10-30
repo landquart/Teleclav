@@ -7,6 +7,82 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task Timeout_StopsWaitingAndCancelsDownloadButRetainsActiveStaging()
+    {
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken downloadToken = default;
+        var cache = new ShellDownloadCache(2, async (_, path, ct) =>
+        {
+            downloadToken = ct;
+            started.SetResult();
+            await finish.Task;
+            await File.WriteAllTextAsync(path, "ok");
+        }, TimeSpan.FromSeconds(2));
+        string directory = cache.DirectoryPath;
+        try
+        {
+            Task<Stream> pending = cache.OpenAsync(0, 2, CancellationToken.None);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.ThrowsAsync<TimeoutException>(() => pending);
+            Assert.True(downloadToken.IsCancellationRequested);
+            Assert.True(Directory.Exists(directory));
+        }
+        finally { finish.SetResult(); cache.Dispose(); }
+    }
+
+    [Fact]
+    public async Task Dispose_UnblocksWaiterEvenIfDownloadDoesNotObserveCancellation()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cache = new ShellDownloadCache(2, async (_, path, _) =>
+        {
+            started.SetResult();
+            await finish.Task;
+            await File.WriteAllTextAsync(path, "ok");
+        });
+        string directory = cache.DirectoryPath;
+        Task<Stream> waiting = cache.OpenAsync(0, 2, CancellationToken.None);
+        await started.Task;
+        cache.Dispose();
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.True(Directory.Exists(directory));
+        }
+        finally { finish.SetResult(); }
+    }
+
+    [Fact]
+    public async Task AlreadyCancelledRequest_DoesNotStartDownload()
+    {
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cache.OpenAsync(0, 2, stop.Token));
+        using Stream stream = await cache.OpenAsync(1, 2, CancellationToken.None);
+        Assert.Equal('o', stream.ReadByte());
+    }
+
+    [Fact]
+    public async Task RepeatedCompletedTransfers_RemoveTheirCacheDirectories()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+            string directory = cache.DirectoryPath;
+            using (Stream stream = await cache.OpenAsync(0, 2, CancellationToken.None))
+            {
+                Assert.Equal('o', stream.ReadByte());
+            }
+            cache.Dispose();
+            Assert.False(Directory.Exists(directory));
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentRequests_ShareDownloadButHaveIndependentReaders()
     {
         int count = 0;

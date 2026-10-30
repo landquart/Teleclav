@@ -96,7 +96,8 @@ public sealed class ShellVirtualFileDragTests
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
-        Assert.Throws<FileNotFoundException>(() => drag.GetData(ref contents, out _));
+        var error = Assert.Throws<COMException>(() => drag.GetData(ref contents, out _));
+        Assert.Equal("The file transfer did not complete.", error.Message);
         Assert.IsType<FileNotFoundException>(drag.TransferError);
         string attemptedPath = Assert.IsType<string>(((BrowserProxy)browser).LastPath);
         drag.Dispose();

@@ -80,6 +80,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
     private readonly EmbeddedSftpViewModel _viewModel;
     private readonly IHostKeyVerifier _hostKeyVerifier;
     private readonly EmbeddedSftpCloseGuard _closeGuard;
+    private readonly ShellTransferRegistry _shellTransfers = new();
 
     private IRemoteBrowser? _browser;
     // The decorated browser (LoggingRemoteBrowser when wired) used for the inline editor's own
@@ -520,6 +521,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
         }
 
         _disposed = true;
+        _shellTransfers.Stop();
         DismissInlineEditor();
         _viewModel.FilesReplacing -= OnFilesReplacing;
         _viewModel.SelectionRestoreRequested -= OnSelectionRestoreRequested;
@@ -2245,7 +2247,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             catch (Exception ex)
             {
                 folderPreparationFailed = true;
-                if (!_disposed) { _viewModel.ShowOperationWarning(ex.Message); }
+                if (!_disposed) { ShowShellTransferFailure(ex); }
             }
             finally
             {
@@ -2259,26 +2261,34 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             bool started = false;
             try
             {
-                ShellVirtualFileDrag shell = hierarchy is null ? new(browser, entries) : new(browser, hierarchy);
+                using ShellVirtualFileDrag shell = hierarchy is null ? new(browser, entries) : new(browser, hierarchy);
+                Action cancel = shell.Cancel;
+                shell.Closed = () => _shellTransfers.Remove(cancel);
+                if (!_shellTransfers.Add(cancel)) { shell.Cancel(); return; }
                 shell.AsyncFailure = failure => Dispatcher.BeginInvoke(() =>
                 {
-                    if (!_disposed) { _viewModel.ShowOperationWarning(failure.Message); }
+                    if (!_disposed) { ShowShellTransferFailure(failure); }
                 });
                 SftpRemoteDragPayload.ActiveShellDrag = payload;
                 started = true;
                 shell.Start();
                 if (shell.TransferError is { } failure)
                 {
-                    _viewModel.ShowOperationWarning(failure.Message);
+                    ShowShellTransferFailure(failure);
                 }
             }
             catch (ArgumentException ex)
             {
-                _viewModel.ShowOperationWarning(ex.Message);
+                ShowShellTransferFailure(ex);
             }
             catch (System.Runtime.InteropServices.COMException ex)
             {
-                _viewModel.ShowOperationWarning(ex.Message);
+                ShowShellTransferFailure(ex);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or System.Security.SecurityException)
+            {
+                ShowShellTransferFailure(ex);
+                return;
             }
             finally
             {
@@ -2308,6 +2318,9 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
             DragOverlay.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void ShowShellTransferFailure(Exception error)
+        => _viewModel.ShowOperationWarning(L(ShellTransferFailure.MessageKey(error)));
 
     // ------------------------------------------------------------------
     // Listing replacement: keep the scroll position and the selection
@@ -2487,6 +2500,7 @@ public partial class EmbeddedSftpView : UserControl, IDisposable, ICloseGuard, I
 
     private void OnBrowserDisconnected(string? errorMessage)
     {
+        _shellTransfers.Stop();
         // The disconnect has been reported with its cause. Left running, the health tick replaced
         // that cause, a host-key warning included, with a generic "no longer responding" line.
         StopHealthTimer();

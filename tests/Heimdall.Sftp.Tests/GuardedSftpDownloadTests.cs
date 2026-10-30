@@ -100,6 +100,64 @@ public sealed class GuardedSftpDownloadTests
         Assert.Equal(0, input.Reads);
     }
 
+    [Fact]
+    public void Transfer_ReadFailureAfterPartialDataPropagatesAndClosesSource()
+    {
+        var input = new InterruptedStream();
+        using MemoryStream output = new();
+        Assert.Throws<IOException>(() => GuardedSftpDownload.Copy("/a", 5, _ => FileInfo(), _ => input, output, CancellationToken.None));
+        Assert.True(input.Closed);
+        Assert.Equal("he"u8.ToArray(), output.ToArray());
+    }
+
+    [Fact]
+    public void Transfer_MatchingMetadataCannotDetectSameSizeSubstitution()
+    {
+        using MemoryStream output = new();
+        GuardedSftpDownload.Copy("/a", 5, _ => FileInfo(),
+            _ => new MemoryStream("other"u8.ToArray()), output, CancellationToken.None);
+        // This characterizes a protocol/API limitation, not an integrity guarantee.
+        Assert.Equal("other"u8.ToArray(), output.ToArray());
+    }
+
+    [Fact]
+    public void Transfer_CancellationDuringReadDoesNotWriteReturnedBytes()
+    {
+        using var stop = new CancellationTokenSource();
+        using MemoryStream output = new();
+        var input = new CancellingStream(stop);
+        Assert.ThrowsAny<OperationCanceledException>(() => GuardedSftpDownload.Copy("/a", 5,
+            _ => FileInfo(), _ => input, output, stop.Token));
+        Assert.Empty(output.ToArray());
+        Assert.True(input.Closed);
+    }
+
+    private sealed class CancellingStream(CancellationTokenSource stop) : MemoryStream("hello"u8.ToArray())
+    {
+        public bool Closed { get; private set; }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = base.Read(buffer, offset, count);
+            stop.Cancel();
+            return read;
+        }
+        protected override void Dispose(bool disposing) { Closed = true; base.Dispose(disposing); }
+    }
+
+    private sealed class InterruptedStream : MemoryStream
+    {
+        private int _reads;
+        public bool Closed { get; private set; }
+        public override long Length => 5;
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_reads++ != 0) { throw new IOException("network read failed"); }
+            buffer[offset] = (byte)'h'; buffer[offset + 1] = (byte)'e';
+            return 2;
+        }
+        protected override void Dispose(bool disposing) { Closed = true; base.Dispose(disposing); }
+    }
+
     private sealed class CountingReadStream(byte[] data) : MemoryStream(data)
     {
         public int Reads { get; private set; }

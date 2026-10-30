@@ -25,6 +25,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
     private bool _asyncClosed;
     private bool _asyncMode;
     internal Action<Exception>? AsyncFailure { get; set; }
+    internal Action? Closed { get; set; }
     private readonly IReadOnlyList<SftpFileInfo> _files;
     private readonly short _descriptorFormat = (short)DataFormats.GetDataFormat("FileGroupDescriptorW").Id;
     private readonly short _contentsFormat = (short)DataFormats.GetDataFormat("FileContents").Id;
@@ -76,10 +77,15 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             _asyncReference = IntPtr.Zero;
         }
         try { _cache.Dispose(); }
-        finally { if (reference != IntPtr.Zero) { Marshal.Release(reference); } }
+        finally
+        {
+            try { if (reference != IntPtr.Zero) { Marshal.Release(reference); } }
+            finally { Closed?.Invoke(); }
+        }
     }
 
     public void Dispose() => _lifetime.DragReturned();
+    internal void Cancel() => _cache.Dispose();
 
     private Exception? _transferError;
     internal Exception? TransferError => Volatile.Read(ref _transferError);
@@ -166,7 +172,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             catch (Exception ex)
             {
                 Interlocked.CompareExchange(ref _transferError, ex, null);
-                throw;
+                throw ShellTransferFailure.ToComException(ex);
             }
 
             return;
