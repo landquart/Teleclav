@@ -1586,6 +1586,7 @@
   "WarnRemoteEntriesSkippedUnsupported": "Skipped {0} entries that are neither files nor directories. See the log for details.",
   "WarnUploadTargetsSkippedUnsupported": "Skipped {0} uploads: the destination already exists and is not a regular file. See the log for details.",
   "WarnUploadTargetsSkippedUnsupportedOne": "Skipped {0} upload: the destination already exists and is not a regular file. See the log for details.",
+  "WarnUploadSourcesNotTransferred": "Some selected items were not uploaded:",
   "WarnUploadSourcesSkippedReparsePoints": "Skipped {0} local links, selected as upload sources or found inside the selected tree. See the log for details.",
   "WarnUploadSourcesSkippedReparsePointsOne": "Skipped {0} local link, selected as an upload source or found inside the selected tree. See the log for details.",
   "WarnRemoteReplacementNonAtomic": "Destination '{0}' was replaced without an atomic guarantee.",
