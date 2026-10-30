@@ -7,6 +7,29 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task Dispose_UnblocksWaiterEvenIfDownloadDoesNotObserveCancellation()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cache = new ShellDownloadCache(2, async (_, path, _) =>
+        {
+            started.SetResult();
+            await finish.Task;
+            await File.WriteAllTextAsync(path, "ok");
+        });
+        string directory = cache.DirectoryPath;
+        Task<Stream> waiting = cache.OpenAsync(0, 2, CancellationToken.None);
+        await started.Task;
+        cache.Dispose();
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.True(Directory.Exists(directory));
+        }
+        finally { finish.SetResult(); }
+    }
+
+    [Fact]
     public async Task AlreadyCancelledRequest_DoesNotStartDownload()
     {
         using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));

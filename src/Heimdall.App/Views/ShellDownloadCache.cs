@@ -22,7 +22,7 @@ internal sealed class ShellDownloadCache : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _download = download ?? throw new ArgumentNullException(nameof(download));
         _limit = limit;
-        DirectoryPath = Directory.CreateTempSubdirectory("teleclav-drag-").FullName;
+        DirectoryPath = ShellStagingDirectory.Create();
     }
 
     internal string DirectoryPath { get; }
@@ -55,7 +55,8 @@ internal sealed class ShellDownloadCache : IDisposable
             }
         }
 
-        string savedPath = await entry.Download.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+        string savedPath = await entry.Download.WaitAsync(waitCancellation.Token).ConfigureAwait(false);
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -97,10 +98,10 @@ internal sealed class ShellDownloadCache : IDisposable
         }
 
         // Cancellation callbacks can run arbitrary code; never invoke them under the cache lock.
-        _stop.Cancel();
-        lock (_gate)
+        try { _stop.Cancel(); }
+        finally
         {
-            CleanupIfFinished();
+            lock (_gate) { CleanupIfFinished(); }
         }
     }
 
