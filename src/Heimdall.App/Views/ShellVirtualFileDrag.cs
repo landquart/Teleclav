@@ -2,9 +2,9 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
-using DataFormats = System.Windows.DataFormats;
 using Heimdall.Sftp;
 using ComDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
+using DataFormats = System.Windows.DataFormats;
 
 namespace Heimdall.App.Views;
 
@@ -225,7 +225,10 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
 
     private static FORMATETC Format(short id, int index, TYMED medium) => new()
     {
-        cfFormat = id, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = index, tymed = medium,
+        cfFormat = id,
+        dwAspect = DVASPECT.DVASPECT_CONTENT,
+        lindex = index,
+        tymed = medium,
     };
 
     public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => throw new COMException("Not supported", ENotImpl);
@@ -258,7 +261,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         [DllImport("shell32.dll")] internal static extern int SHCreateStdEnumFmtEtc(uint count, FORMATETC[] formats, out IEnumFORMATETC result);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalAlloc(uint flags, nuint size);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalLock(IntPtr handle);
-        [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GlobalUnlock(IntPtr handle);
+        [DllImport("kernel32.dll")][return: MarshalAs(UnmanagedType.Bool)] internal static extern bool GlobalUnlock(IntPtr handle);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalFree(IntPtr handle);
     }
 }
