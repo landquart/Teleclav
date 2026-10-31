@@ -40,3 +40,14 @@
 *.otf   binary
 *.woff  binary
 *.woff2 binary
+
+# VENDORED.json pins the exact bytes of these upstream files and trees.
+# Never rewrite their line endings when checking out on Windows.
+src/Heimdall.App/Assets/Terminal/*.js -text
+src/Heimdall.App/Assets/Terminal/*.css -text
+src/Heimdall.App/Assets/drawio/js/app.min.js -text
+src/Heimdall.App/Assets/milkdown/index.html -text
+src/Heimdall.App/Assets/milkdown-editor/package-lock.json -text
+src/Heimdall.App/Assets/milkdown-editor/dist/index.html -text
+src/Heimdall.App/Assets/vnc/core/** -text
+src/Heimdall.App/Assets/vnc/vendor/** -text
