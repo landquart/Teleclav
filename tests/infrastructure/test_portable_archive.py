@@ -57,10 +57,19 @@ class PortableArchiveTests(unittest.TestCase):
         self.assertIn('unsafe path', result.stderr)
 
     def test_backslash_path_fails(self):
-        files = dict(FILES); files['bad\\path'] = b'bad'
-        result = self.check(files)
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn('unsafe path', result.stderr)
+        # ZipInfo normalizes os.sep on Windows, so patch both ZIP headers to
+        # construct the same hostile archive independently of the host OS.
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'portable.zip'
+            with zipfile.ZipFile(archive, 'w') as z:
+                for name, data in FILES.items(): z.writestr(name, data)
+                z.writestr('bad/path', b'bad')
+            data = archive.read_bytes()
+            self.assertEqual(2, data.count(b'bad/path'))
+            archive.write_bytes(data.replace(b'bad/path', b'bad\\path'))
+            result = subprocess.run([sys.executable, str(CHECK), str(archive)], capture_output=True, text=True)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn('unsafe path', result.stderr)
 
     def test_empty_required_file_fails(self):
         files = dict(FILES); files['LICENSE'] = b''
