@@ -11,7 +11,8 @@ CHECK = Path(__file__).absolute().parents[2] / 'scripts/check_portable_archive.p
 FILES = {
     'Heimdall.exe': b'exe', 'Heimdall.dll': b'dll', 'hostfxr.dll': b'runtime',
     'hostpolicy.dll': b'runtime', 'coreclr.dll': b'runtime',
-    'Microsoft.WindowsDesktop.App.deps.json': b'{}',
+    'Heimdall.deps.json': b'{}', 'PresentationFramework.dll': b'wpf',
+    'PresentationCore.dll': b'wpf', 'WindowsBase.dll': b'wpf',
     'WebView2Loader.dll': b'loader', 'LICENSE': b'license',
     'THIRD-PARTY-NOTICES.md': b'notices', 'config/settings.default.json': b'{}',
     'locales/en.json': b'{}', 'locales/fr.json': b'{}', 'locales/es.json': b'{}',
