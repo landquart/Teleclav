@@ -7,7 +7,8 @@ from pathlib import PurePosixPath
 REQUIRED = (
     'Heimdall.exe', 'Heimdall.dll', 'Heimdall.runtimeconfig.json',
     'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll',
-    'Microsoft.WindowsDesktop.App.deps.json', 'WebView2Loader.dll',
+    'Heimdall.deps.json', 'PresentationFramework.dll', 'PresentationCore.dll',
+    'WindowsBase.dll', 'WebView2Loader.dll',
     'LICENSE', 'THIRD-PARTY-NOTICES.md', 'config/settings.default.json',
     'locales/en.json', 'locales/fr.json', 'locales/es.json',
     'Assets/Terminal/VENDORED.json',
