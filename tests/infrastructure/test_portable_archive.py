@@ -7,7 +7,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-CHECK = Path(__file__).resolve().parents[2] / 'scripts/check_portable_archive.py'
+CHECK = Path(__file__).absolute().parents[2] / 'scripts/check_portable_archive.py'
 FILES = {
     'Heimdall.exe': b'exe', 'Heimdall.dll': b'dll', 'hostfxr.dll': b'runtime',
     'hostpolicy.dll': b'runtime', 'coreclr.dll': b'runtime',
@@ -42,6 +42,46 @@ class PortableArchiveTests(unittest.TestCase):
         result = self.check(files)
         self.assertNotEqual(0, result.returncode)
         self.assertIn('self-contained', result.stderr)
+
+    def test_unsafe_path_fails(self):
+        files = dict(FILES); files['../outside'] = b'bad'
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('unsafe path', result.stderr)
+
+    def test_absolute_path_fails(self):
+        files = dict(FILES); files['/outside'] = b'bad'
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('unsafe path', result.stderr)
+
+    def test_backslash_path_fails(self):
+        files = dict(FILES); files['bad\\path'] = b'bad'
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('unsafe path', result.stderr)
+
+    def test_empty_required_file_fails(self):
+        files = dict(FILES); files['LICENSE'] = b''
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('LICENSE', result.stderr)
+
+    def test_nonempty_notice_is_accepted(self):
+        files = dict(FILES); files['LICENSE'] = b'x'
+        result = self.check(files)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_invalid_runtime_config_fails(self):
+        files = dict(FILES); files['Heimdall.runtimeconfig.json'] = b'not json'
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_invalid_zip_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp) / 'bad.zip'; archive.write_bytes(b'not zip')
+            result = subprocess.run([sys.executable, str(CHECK), str(archive)], capture_output=True, text=True)
+            self.assertNotEqual(0, result.returncode)
 
     def test_missing_notice_fails(self):
         files = dict(FILES); del files['LICENSE']
