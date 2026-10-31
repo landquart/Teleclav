@@ -70,6 +70,11 @@ class PortableArchiveTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(CHECK), str(archive)], capture_output=True, text=True)
             self.assertNotEqual(0, result.returncode)
             self.assertIn('unsafe path', result.stderr)
+            # Simulate Windows ZipInfo normalizing separators during reading.
+            code = "import os,runpy,sys,zipfile; os.sep=chr(92); sys.argv=[sys.argv[1],sys.argv[2]]; runpy.run_path(sys.argv[0],run_name='__main__')"
+            result = subprocess.run([sys.executable, '-c', code, str(CHECK), str(archive)], capture_output=True, text=True)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn('unsafe path', result.stderr)
 
     def test_empty_required_file_fails(self):
         files = dict(FILES); files['LICENSE'] = b''
