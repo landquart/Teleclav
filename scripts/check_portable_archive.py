@@ -1,0 +1,44 @@
+"""Verify essential contents of the Windows x64 portable ZIP without extracting it."""
+import json
+import sys
+import zipfile
+from pathlib import PurePosixPath
+
+REQUIRED = (
+    'Heimdall.exe', 'Heimdall.dll', 'Heimdall.runtimeconfig.json',
+    'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll',
+    'Microsoft.WindowsDesktop.App.deps.json', 'WebView2Loader.dll',
+    'LICENSE', 'THIRD-PARTY-NOTICES.md', 'config/settings.default.json',
+    'locales/en.json', 'locales/fr.json', 'locales/es.json',
+    'Assets/Terminal/VENDORED.json',
+)
+
+
+def check(path):
+    with zipfile.ZipFile(path) as archive:
+        entries = archive.infolist()
+        names = {entry.filename: entry for entry in entries}
+        if len(names) != len(entries):
+            raise ValueError('duplicate archive entries')
+        for entry in entries:
+            parts = PurePosixPath(entry.filename).parts
+            if entry.filename.startswith('/') or '\\' in entry.filename or '..' in parts:
+                raise ValueError(f'unsafe path: {entry.filename}')
+        for name in REQUIRED:
+            if name not in names or names[name].file_size == 0:
+                raise ValueError(f'missing or empty: {name}')
+        if archive.testzip() is not None:
+            raise ValueError('archive contains corrupted data')
+        config = json.loads(archive.read('Heimdall.runtimeconfig.json'))['runtimeOptions']
+        included = {item['name'] for item in config.get('includedFrameworks', [])}
+        if not {'Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App'} <= included:
+            raise ValueError('runtime configuration is not self-contained')
+    print('Portable ZIP integrity, required files and runtime configuration verified.')
+
+
+if __name__ == '__main__':
+    try:
+        check(sys.argv[1])
+    except (OSError, ValueError, KeyError, IndexError, zipfile.BadZipFile) as exc:
+        print(f'ERROR: {exc}', file=sys.stderr)
+        sys.exit(1)
