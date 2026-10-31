@@ -14,25 +14,37 @@ REQUIRED = (
 )
 
 
+def check_paths(entries):
+    names = {entry.filename: entry for entry in entries}
+    if len(names) != len(entries):
+        raise ValueError('duplicate archive entries')
+    for entry in entries:
+        parts = PurePosixPath(entry.filename).parts
+        if entry.filename.startswith('/') or '\\' in entry.filename or '..' in parts:
+            raise ValueError(f'unsafe path: {entry.filename}')
+    return names
+
+
+def check_entries(archive):
+    names = check_paths(archive.infolist())
+    for name in REQUIRED:
+        if name not in names or names[name].file_size == 0:
+            raise ValueError(f'missing or empty: {name}')
+    if archive.testzip() is not None:
+        raise ValueError('archive contains corrupted data')
+
+
+def check_runtime(archive):
+    config = json.loads(archive.read('Heimdall.runtimeconfig.json'))['runtimeOptions']
+    included = {item['name'] for item in config.get('includedFrameworks', [])}
+    if not {'Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App'} <= included:
+        raise ValueError('runtime configuration is not self-contained')
+
+
 def check(path):
     with zipfile.ZipFile(path) as archive:
-        entries = archive.infolist()
-        names = {entry.filename: entry for entry in entries}
-        if len(names) != len(entries):
-            raise ValueError('duplicate archive entries')
-        for entry in entries:
-            parts = PurePosixPath(entry.filename).parts
-            if entry.filename.startswith('/') or '\\' in entry.filename or '..' in parts:
-                raise ValueError(f'unsafe path: {entry.filename}')
-        for name in REQUIRED:
-            if name not in names or names[name].file_size == 0:
-                raise ValueError(f'missing or empty: {name}')
-        if archive.testzip() is not None:
-            raise ValueError('archive contains corrupted data')
-        config = json.loads(archive.read('Heimdall.runtimeconfig.json'))['runtimeOptions']
-        included = {item['name'] for item in config.get('includedFrameworks', [])}
-        if not {'Microsoft.NETCore.App', 'Microsoft.WindowsDesktop.App'} <= included:
-            raise ValueError('runtime configuration is not self-contained')
+        check_entries(archive)
+        check_runtime(archive)
     print('Portable ZIP integrity, required files and runtime configuration verified.')
 
 
