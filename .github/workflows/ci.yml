@@ -379,14 +379,24 @@ jobs:
       # running in parallel, which tears a failure's name, message and stack
       # trace apart and glues fragments of one onto another - a failing run
       # then names the wrong test. These stay readable.
-      - name: Upload test results
+      - name: Upload required test results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
-        continue-on-error: true
         with:
-          name: test-results
-          path: TestResults/**/*.trx
-          if-no-files-found: ignore
+          name: required-test-results
+          path: TestResults/*.trx
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload informational test results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: informational-test-results
+          path: |
+            TestResults/CIUnstable/*.trx
+            TestResults/RequiresDesktop/*.trx
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Upload coverage report
