@@ -74,3 +74,7 @@ The locked solution restore also passed with NuGet audit enabled. The separate s
 `npm audit --package-lock-only --ignore-scripts --json` completed and returned four low-severity package records, no moderate/high/critical records; npm exited 1 because advisories exist. The four affected records are @milkdown/crepe, katex, micromark-extension-math and remark-math; the report lists a major-version change to @milkdown/crepe as a possible fix. This command does not apply the repository's PowerShell baseline policy; the authoritative CI verdict remains unrun. No package update was made.
 
 The self-contained ZIP's Heimdall.exe was also inspected as PE x64 (machine 0x8664); 3,453 entries were present. That inspection does not execute it.
+
+## Actions recheck
+
+On 2026-10-31 the repository owner reported enabling Actions. A new PR update was made to generate a fresh pull_request synchronize event. Its actual workflow result must be checked before declaring CI functional.
