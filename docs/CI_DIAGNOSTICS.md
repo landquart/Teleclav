@@ -29,3 +29,13 @@ NUGET_PACKAGES=/tmp/teleclav-nuget dotnet test tests/Heimdall.Core.Tests/Heimdal
 ```
 
 The original Core TRX was generated locally and is not a GitHub Actions artifact. It contains test names, messages and stacks; the checked-in failure list preserves names and first error lines only. More evidence and a Windows run are still required. For Windows build and portable publish commands see [BUILDING.md](BUILDING.md); those commands are documented, not verified in this run.
+
+## Linux locked restore investigation (2026-10-31)
+
+With SDK 10.0.103 on Linux, the first locked restore of the Windows-targeted SSH tests failed NU1004 for the Heimdall.Core project reference. Diagnostic MSBuild output showed that `Microsoft.WindowsDesktop.App.Ref/10.0.3/data/PackageOverrides.txt` was absent, so framework pruning was computed without the Windows Desktop targeting-pack data. The committed Windows-targeted SSH test lock entry does not contain `System.Security.Cryptography.ProtectedData`, whereas the normal Core test entry does. The missing Windows Desktop pack's PackageOverrides.txt lists that package. This establishes a missing targeting-pack explanation for the tested Linux configuration; it does not establish Windows behavior.
+
+A matching Microsoft.WindowsDesktop.App.Ref 10.0.3 package from nuget.org was extracted into the SDK's `packs/Microsoft.WindowsDesktop.App.Ref/10.0.3` directory. With that pack available, the same SSH test project locked restore passed and the full solution locked restore passed on Linux, using `-p:EnableWindowsTargeting=true -p:NuGetAudit=false -m:1` and an explicit Linux `NUGET_PACKAGES` directory. No lock file was regenerated. Audit was disabled only for this local restore diagnosis, not the CI dependency audit. This installation procedure is a diagnostic workaround, not a verified Windows CI fix. SDKs installed by a system package manager should not be modified in place.
+
+## Portable and test artifacts guard
+
+The portable ZIP checker validates archive integrity, required application/runtime, resource and notice paths and the runtime configuration. Four fixture-based Python tests first failed because the gate did not exist, and then passed after implementation; all 11 infrastructure Python tests passed. The gate has not yet been checked against a fresh real publish or on Windows. Required TRX upload was changed to fail on missing files; the Actions behavior of that change is unverified.
