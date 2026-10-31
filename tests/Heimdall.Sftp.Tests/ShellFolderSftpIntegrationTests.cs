@@ -31,7 +31,10 @@ public sealed class ShellFolderSftpIntegrationTests
             using var browser = new SftpBrowser();
             await browser.ConnectAsync(new SshConnectionParams
             {
-                Host = "127.0.0.1", Port = port, Username = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName, KeyPath = key,
+                Host = "127.0.0.1",
+                Port = port,
+                Username = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName,
+                KeyPath = key,
             }, new HostKeyStore(), new PinnedFingerprintVerifier("127.0.0.1", port, fingerprint));
             var roots = await browser.ListDirectoryStrictAsync(testRoot);
             SftpFileInfo root = Assert.Single(roots, item => item.Name == "проект");
