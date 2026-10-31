@@ -20,9 +20,10 @@ def check_paths(entries):
     if len(names) != len(entries):
         raise ValueError('duplicate archive entries')
     for entry in entries:
-        parts = PurePosixPath(entry.filename).parts
-        if entry.filename.startswith('/') or '\\' in entry.filename or '..' in parts:
-            raise ValueError(f'unsafe path: {entry.filename}')
+        raw_name = entry.orig_filename
+        parts = PurePosixPath(raw_name).parts
+        if raw_name.startswith('/') or '\\' in raw_name or '..' in parts:
+            raise ValueError(f'unsafe path: {raw_name}')
     return names
 
 
