@@ -259,6 +259,12 @@ jobs:
       - name: Verify portable ZIP contents
         run: python scripts/check_portable_archive.py artifacts/Teleclav-portable-win-x64.zip
 
+      - name: Launch the extracted portable application
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          ./scripts/Test-PortableStartup.ps1 -Archive artifacts/Teleclav-portable-win-x64.zip -Destination "$env:RUNNER_TEMP/teleclav-portable-smoke"
+
       - name: Upload portable distribution
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -406,4 +412,48 @@ jobs:
         with:
           name: coverage-report
           path: TestResults/**/coverage.cobertura.xml
+          retention-days: 30
+
+  ubuntu-openssh-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Install local OpenSSH server
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openssh-server
+      - name: Start pinned loopback SFTP
+        shell: bash
+        run: bash scripts/start-local-sftp-ci.sh
+      - name: Restore SFTP tests in locked mode
+        run: dotnet restore tests/Heimdall.Sftp.Tests/Heimdall.Sftp.Tests.csproj --locked-mode
+      - name: Test real local OpenSSH SFTP
+        run: >
+          dotnet test tests/Heimdall.Sftp.Tests/Heimdall.Sftp.Tests.csproj --no-restore -c Release
+          --filter FullyQualifiedName~ShellFolderSftpIntegrationTests.FolderPlanAndBoundedDownload_PreserveTreeAndHashes
+          --logger "trx;LogFileName=openssh.trx" --results-directory TestResults/OpenSSH
+      - name: Require the integration test to execute and pass
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('TestResults/OpenSSH/openssh.trx').getroot()
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          tests = root.findall('.//t:UnitTestResult', ns)
+          if len(tests) != 1 or tests[0].get('outcome') != 'Passed':
+              raise SystemExit('Expected exactly one passed OpenSSH test; no skips are accepted.')
+          PY
+      - name: Upload OpenSSH test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openssh-test-results
+          path: TestResults/OpenSSH/*.trx
+          if-no-files-found: error
           retention-days: 30
