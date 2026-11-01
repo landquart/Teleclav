@@ -91,6 +91,35 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public void EnumerateFormats_Hierarchy_AdvertisesEveryFileIndexAndNoDirectories()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ShellFolderItem[] entries = [
+            new(RemoteDownloadOpKind.MakeDirectory, "/folder", "folder", 0),
+            new(RemoteDownloadOpKind.DownloadFile, "/folder/a.txt", "folder/a.txt", 5),
+            new(RemoteDownloadOpKind.MakeDirectory, "/folder/empty", "folder/empty", 0),
+            new(RemoteDownloadOpKind.DownloadFile, "/folder/b.txt", "folder/b.txt", 5)
+        ];
+        using ShellVirtualFileDrag drag = new(browser, entries);
+        IEnumFORMATETC enumerator = drag.EnumFormatEtc(DATADIR.DATADIR_GET);
+        FORMATETC[] one = new FORMATETC[1];
+        List<int> indices = [];
+        int[] fetched = new int[1];
+        short contents = (short)DataFormats.GetDataFormat("FileContents").Id;
+        while (enumerator.Next(1, one, fetched) == 0)
+        {
+            if (one[0].cfFormat == contents)
+            {
+                FORMATETC advertised = one[0];
+                Assert.Equal(0, drag.QueryGetData(ref advertised));
+                indices.Add(advertised.lindex);
+            }
+        }
+
+        Assert.Equal(new[] { 1, 3 }, indices);
+    }
+
+    [Fact]
     public void GetContents_MissingRemoteFile_ReportsFailure()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
