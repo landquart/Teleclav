@@ -7,7 +7,7 @@ internal sealed class ShellAsyncLifetime
     private readonly Action _cleanup;
     private readonly TimeSpan _idleLimit;
     private readonly object _gate = new();
-    private Timer? _timer;
+    private System.Threading.Timer? _timer;
     private int _generation;
     private int _callbacks;
     private bool _inOperation;
@@ -109,7 +109,7 @@ internal sealed class ShellAsyncLifetime
         if (!_dragReturned || !_inOperation || _callbacks != 0 || _cancelled || _cleaned) { return; }
         Disarm();
         var ticket = new Ticket(this, _generation);
-        _timer = new Timer(static state =>
+        _timer = new System.Threading.Timer(static state =>
         {
             var current = (Ticket)state!;
             current.Owner.Expire(current.Generation);
