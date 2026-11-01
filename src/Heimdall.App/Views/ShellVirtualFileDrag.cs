@@ -160,7 +160,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
                 var stream = new ShellReadStream(file);
                 try
                 {
-                    medium.unionmember = Marshal.GetComInterfaceForObject(stream, typeof(IStream));
+                    medium.unionmember = Marshal.GetComInterfaceForObject(stream, typeof(IShellNativeStream));
                     medium.tymed = TYMED.TYMED_ISTREAM;
                 }
                 catch
@@ -212,14 +212,14 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
     public IEnumFORMATETC EnumFormatEtc(DATADIR direction)
     {
         if (direction != DATADIR.DATADIR_GET) { throw new COMException("Not supported", ENotImpl); }
-        FORMATETC[] formats =
-        [
-            Format(_descriptorFormat, -1, TYMED.TYMED_HGLOBAL),
-            Format(_contentsFormat, 0, TYMED.TYMED_ISTREAM),
-            Format(_preferredFormat, -1, TYMED.TYMED_HGLOBAL),
-            Format(_internalFormat, -1, TYMED.TYMED_HGLOBAL),
-        ];
-        Marshal.ThrowExceptionForHR(NativeMethods.SHCreateStdEnumFmtEtc((uint)formats.Length, formats, out IEnumFORMATETC result));
+        List<FORMATETC> formats = [Format(_descriptorFormat, -1, TYMED.TYMED_HGLOBAL)];
+        for (int i = 0; i < _files.Count; i++)
+        {
+            if (_files[i].IsRegularFile) { formats.Add(Format(_contentsFormat, i, TYMED.TYMED_ISTREAM)); }
+        }
+        formats.Add(Format(_preferredFormat, -1, TYMED.TYMED_HGLOBAL));
+        formats.Add(Format(_internalFormat, -1, TYMED.TYMED_HGLOBAL));
+        Marshal.ThrowExceptionForHR(NativeMethods.SHCreateStdEnumFmtEtc((uint)formats.Count, formats.ToArray(), out IEnumFORMATETC result));
         return result;
     }
 
