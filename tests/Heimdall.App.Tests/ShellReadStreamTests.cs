@@ -21,7 +21,7 @@ public sealed class ShellReadStreamTests
         try
         {
             Guid iid = typeof(IStream).GUID;
-            Assert.Equal(0, Marshal.QueryInterface(com, ref iid, out IntPtr queried));
+            Assert.Equal(0, Marshal.QueryInterface(com, in iid, out IntPtr queried));
             Marshal.Release(queried);
             IntPtr vtable = Marshal.ReadIntPtr(com);
             var nativeRead = Marshal.GetDelegateForFunctionPointer<NativeRead>(Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
