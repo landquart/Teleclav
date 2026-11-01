@@ -8,6 +8,33 @@ namespace Heimdall.App.Tests;
 
 public sealed class ShellReadStreamTests
 {
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int NativeRead(IntPtr self, IntPtr buffer, uint count, IntPtr read);
+
+    [Fact]
+    public void NativeRead_ReturnsSFalseWhenEndOfStreamIsReached()
+    {
+        using var stream = new ShellReadStream(new MemoryStream("hi"u8.ToArray()));
+        IntPtr com = Marshal.GetComInterfaceForObject(stream, typeof(IStream));
+        IntPtr buffer = Marshal.AllocCoTaskMem(4);
+        IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
+        try
+        {
+            IntPtr vtable = Marshal.ReadIntPtr(com);
+            var nativeRead = Marshal.GetDelegateForFunctionPointer<NativeRead>(Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
+            Assert.Equal(1, nativeRead(com, buffer, 4, read));
+            Assert.Equal(2, Marshal.ReadInt32(read));
+            Assert.Equal((byte)'h', Marshal.ReadByte(buffer));
+            Assert.Equal((byte)'i', Marshal.ReadByte(buffer, 1));
+        }
+        finally
+        {
+            Marshal.Release(com);
+            Marshal.FreeCoTaskMem(buffer);
+            Marshal.FreeCoTaskMem(read);
+        }
+    }
+
     [Fact]
     public void CopyTo_PartialWriteReportsActualCountsAndFails()
     {
