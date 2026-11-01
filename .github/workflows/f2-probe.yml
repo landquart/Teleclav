@@ -14,7 +14,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet restore tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --locked-mode
-      - run: dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-restore --filter "FullyQualifiedName~CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation" --logger "trx;LogFileName=f2-probe.trx"
+      - run: dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-restore --filter "FullyQualifiedName~Dispose_DoesNotWaitForBlockingCancellationCallbacks" --logger "trx;LogFileName=f2-probe.trx"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

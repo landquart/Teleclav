@@ -85,7 +85,11 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
     }
 
     public void Dispose() => _lifetime.DragReturned();
-    internal void Cancel() => _cache.Dispose();
+    internal void Cancel()
+    {
+        try { _cache.Dispose(); }
+        finally { _lifetime.Cancel(); }
+    }
 
     private Exception? _transferError;
     internal Exception? TransferError => Volatile.Read(ref _transferError);

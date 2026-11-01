@@ -9,6 +9,7 @@ internal sealed class ShellAsyncLifetime(Action cleanup)
     private bool _started;
     private bool _dragReturned;
     private bool _cleaned;
+    private bool _cancelled;
 
     internal bool InOperation { get { lock (_gate) { return _inOperation; } } }
 
@@ -45,9 +46,20 @@ internal sealed class ShellAsyncLifetime(Action cleanup)
         if (clean) { cleanup(); }
     }
 
+    internal void Cancel()
+    {
+        bool clean;
+        lock (_gate)
+        {
+            _cancelled = true;
+            clean = MarkCleanup();
+        }
+        if (clean) { cleanup(); }
+    }
+
     private bool MarkCleanup()
     {
-        if (!_dragReturned || _inOperation || _cleaned) { return false; }
+        if (!_dragReturned || (_inOperation && !_cancelled) || _cleaned) { return false; }
         _cleaned = true;
         return true;
     }
