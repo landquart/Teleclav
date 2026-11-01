@@ -1586,7 +1586,7 @@
   "WarnRemoteEntriesSkippedUnsupported": "Entr\u00e9es ignor\u00e9es car elles ne sont ni des fichiers ni des r\u00e9pertoires : {0}. Consultez le journal pour plus de d\u00e9tails.",
   "WarnUploadTargetsSkippedUnsupported": "{0} envois ignor\u00e9s : la destination existe d\u00e9j\u00e0 et n'est pas un fichier r\u00e9gulier. Voir le journal pour le d\u00e9tail.",
   "WarnUploadTargetsSkippedUnsupportedOne": "{0} envoi ignor\u00e9 : la destination existe d\u00e9j\u00e0 et n'est pas un fichier r\u00e9gulier. Voir le journal pour le d\u00e9tail.",
-  "WarnUploadSourcesNotTransferred": "Certains \u00e9l\u00e9ments s\u00e9lectionn\u00e9s n\u2019ont pas \u00e9t\u00e9 envoy\u00e9s :",
+  "WarnUploadSourcesNotTransferred": "Certains \u00e9l\u00e9ments s\u00e9lectionn\u00e9s n'ont pas \u00e9t\u00e9 envoy\u00e9s :",
   "WarnUploadSourcesSkippedReparsePoints": "{0} liens locaux ignor\u00e9s, s\u00e9lectionn\u00e9s comme source d'envoi ou trouv\u00e9s dans l'arborescence s\u00e9lectionn\u00e9e. Consultez le journal pour plus de d\u00e9tails.",
   "WarnUploadSourcesSkippedReparsePointsOne": "{0} lien local ignor\u00e9, s\u00e9lectionn\u00e9 comme source d'envoi ou trouv\u00e9 dans l'arborescence s\u00e9lectionn\u00e9e. Consultez le journal pour plus de d\u00e9tails.",
   "WarnRemoteReplacementNonAtomic": "La destination '{0}' a \u00e9t\u00e9 remplac\u00e9e sans garantie atomique.",

@@ -214,6 +214,12 @@ jobs:
       - name: Check project files and license notices
         run: python scripts/check_repository_integrity.py
 
+      - name: Check Milkdown license inventory
+        run: >
+          python scripts/check_milkdown_license_inventory.py
+          src/Heimdall.App/Assets/milkdown-editor/package-lock.json
+          THIRD-PARTY-LICENSES/milkdown-dependencies-LICENSES.txt
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -250,11 +256,21 @@ jobs:
         run: |
           if (-not (Test-Path 'artifacts/portable/Heimdall.exe')) { throw 'Published application is missing.' }
           Copy-Item LICENSE,THIRD-PARTY-NOTICES.md artifacts/portable/
+          Copy-Item -Recurse THIRD-PARTY-LICENSES artifacts/portable/
           New-Item -ItemType Directory -Path artifacts/portable/test-tools | Out-Null
           Copy-Item scripts/drag_drop_fixture.py,scripts/Compare-DragDropManifest.ps1,docs/DRAG_DROP_ACCEPTANCE.md artifacts/portable/test-tools/
           Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/Teleclav-portable-win-x64.zip
           (Get-FileHash artifacts/Teleclav-portable-win-x64.zip -Algorithm SHA256).Hash |
             Set-Content artifacts/Teleclav-portable-win-x64.sha256
+
+      - name: Verify portable ZIP contents
+        run: python scripts/check_portable_archive.py artifacts/Teleclav-portable-win-x64.zip
+
+      - name: Launch the extracted portable application
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          ./scripts/Test-PortableStartup.ps1 -Archive artifacts/Teleclav-portable-win-x64.zip -Destination "$env:RUNNER_TEMP/teleclav-portable-smoke"
 
       - name: Upload portable distribution
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -376,14 +392,24 @@ jobs:
       # running in parallel, which tears a failure's name, message and stack
       # trace apart and glues fragments of one onto another - a failing run
       # then names the wrong test. These stay readable.
-      - name: Upload test results
+      - name: Upload required test results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
-        continue-on-error: true
         with:
-          name: test-results
-          path: TestResults/**/*.trx
-          if-no-files-found: ignore
+          name: required-test-results
+          path: TestResults/*.trx
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload informational test results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: informational-test-results
+          path: |
+            TestResults/CIUnstable/*.trx
+            TestResults/RequiresDesktop/*.trx
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Upload coverage report
@@ -393,4 +419,48 @@ jobs:
         with:
           name: coverage-report
           path: TestResults/**/coverage.cobertura.xml
+          retention-days: 30
+
+  ubuntu-openssh-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+      - name: Install local OpenSSH server
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openssh-server
+      - name: Start pinned loopback SFTP
+        shell: bash
+        run: bash scripts/start-local-sftp-ci.sh
+      - name: Restore SFTP tests in locked mode
+        run: dotnet restore tests/Heimdall.Sftp.Tests/Heimdall.Sftp.Tests.csproj --locked-mode
+      - name: Test real local OpenSSH SFTP
+        run: >
+          dotnet test tests/Heimdall.Sftp.Tests/Heimdall.Sftp.Tests.csproj --no-restore -c Release
+          --filter FullyQualifiedName~ShellFolderSftpIntegrationTests.FolderPlanAndBoundedDownload_PreserveTreeAndHashes
+          --logger "trx;LogFileName=openssh.trx" --results-directory TestResults/OpenSSH
+      - name: Require the integration test to execute and pass
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('TestResults/OpenSSH/openssh.trx').getroot()
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          tests = root.findall('.//t:UnitTestResult', ns)
+          if len(tests) != 1 or tests[0].get('outcome') != 'Passed':
+              raise SystemExit('Expected exactly one passed OpenSSH test; no skips are accepted.')
+          PY
+      - name: Upload OpenSSH test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openssh-test-results
+          path: TestResults/OpenSSH/*.trx
+          if-no-files-found: error
           retention-days: 30
