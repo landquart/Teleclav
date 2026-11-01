@@ -23,13 +23,14 @@ internal sealed class ShellDownloadCache : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _download = download ?? throw new ArgumentNullException(nameof(download));
         _limit = limit;
-        _waitLimit = waitLimit ?? TimeSpan.FromHours(24);
+        _waitLimit = waitLimit ?? TimeSpan.FromMinutes(30);
         if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
             throw new ArgumentOutOfRangeException(nameof(waitLimit));
         DirectoryPath = ShellStagingDirectory.Create();
     }
 
     internal string DirectoryPath { get; }
+    internal CancellationToken StopToken => _stop.Token;
 
     internal async Task<Stream> OpenAsync(int index, long size, CancellationToken cancellationToken)
     {
@@ -64,6 +65,7 @@ internal sealed class ShellDownloadCache : IDisposable
         try { savedPath = await entry.Download.WaitAsync(_waitLimit, waitCancellation.Token).ConfigureAwait(false); }
         catch (TimeoutException)
         {
+            Heimdall.Core.Logging.FileLogger.Warn("A Shell download exceeded its wait limit; cancellation was requested.");
             Dispose();
             throw;
         }

@@ -20,6 +20,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
     private readonly IRemoteBrowser _browser;
     private readonly ShellDownloadCache _cache;
     private readonly ShellAsyncLifetime _lifetime;
+    private readonly TimeSpan _timeout = TransferTimeout();
     private readonly object _asyncGate = new();
     private IntPtr _asyncReference;
     private bool _asyncClosed;
@@ -39,7 +40,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         _files = [file];
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
     internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<SftpFileInfo> files)
@@ -49,7 +50,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         _files = files.ToArray();
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
     internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items)
@@ -61,11 +62,18 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             item.Size, DateTime.UnixEpoch, "", "", "")).ToArray();
         _descriptor = ShellVirtualFileDescriptor.CreateHierarchy(items);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
     private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
-        (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct));
+        (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct), _timeout);
+
+    private static TimeSpan TransferTimeout()
+    {
+        string? configured = Environment.GetEnvironmentVariable("TELECLAV_SHELL_TIMEOUT_SECONDS");
+        return int.TryParse(configured, out int seconds) && seconds is >= 30 and <= 86400
+            ? TimeSpan.FromSeconds(seconds) : TimeSpan.FromMinutes(30);
+    }
 
     private void Cleanup()
     {
@@ -149,6 +157,13 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
 
     public void GetData(ref FORMATETC format, out STGMEDIUM medium)
     {
+        if (!_lifetime.Enter()) { throw new COMException("Shell transfer is closed.", unchecked((int)0x800704C7)); }
+        try { GetDataCore(ref format, out medium); }
+        finally { _lifetime.Exit(); }
+    }
+
+    private void GetDataCore(ref FORMATETC format, out STGMEDIUM medium)
+    {
         if (QueryGetData(ref format) != 0)
         {
             Marshal.ThrowExceptionForHR(DvEFormatEtc);
@@ -160,7 +175,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             SftpFileInfo fileEntry = _files[format.lindex];
             try
             {
-                Stream file = _cache.OpenAsync(format.lindex, fileEntry.Size, CancellationToken.None).GetAwaiter().GetResult();
+                Stream file = _cache.OpenAsync(format.lindex, fileEntry.Size, _cache.StopToken).GetAwaiter().GetResult();
                 var stream = new ShellReadStream(file);
                 try
                 {

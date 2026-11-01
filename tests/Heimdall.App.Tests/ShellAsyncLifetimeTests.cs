@@ -17,6 +17,39 @@ public sealed class ShellAsyncLifetimeTests
     }
 
     [Fact]
+    public async Task IdleDeadline_DoesNotReleaseAnActiveCallback()
+    {
+        var cleaned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lifetime = new ShellAsyncLifetime(() => cleaned.TrySetResult(), TimeSpan.FromMilliseconds(50));
+        Assert.True(lifetime.Begin());
+        Assert.True(lifetime.Enter());
+        lifetime.DragReturned();
+        await Task.Delay(250);
+        Assert.False(cleaned.Task.IsCompleted);
+        lifetime.Exit();
+        await cleaned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(lifetime.Enter());
+    }
+
+    [Fact]
+    public void CancelBeforeDragReturns_WaitsForActiveCallbackAndDragReturn()
+    {
+        int cleaned = 0;
+        var lifetime = new ShellAsyncLifetime(() => cleaned++);
+        Assert.True(lifetime.Begin());
+        Assert.True(lifetime.Enter());
+        lifetime.Cancel();
+        lifetime.DragReturned();
+        Assert.Equal(0, cleaned);
+        lifetime.Exit();
+        Assert.Equal(1, cleaned);
+        lifetime.End();
+        lifetime.Cancel();
+        Assert.Equal(1, cleaned);
+        Assert.False(lifetime.Enter());
+    }
+
+    [Fact]
     public void AsyncExtractionRetainsResourcesUntilBothOperationsFinish()
     {
         int cleaned = 0;
