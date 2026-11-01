@@ -12,6 +12,21 @@ namespace Heimdall.App.Tests;
 public sealed class ShellVirtualFileDragTests
 {
     [Fact]
+    public void CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation()
+    {
+        using ShellVirtualFileDrag drag = CreateDrag();
+        int closed = 0;
+        drag.Closed = () => Interlocked.Increment(ref closed);
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        drag.Cancel();
+        drag.Dispose();
+        Assert.Equal(1, closed);
+        Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 0));
+        Assert.Equal(1, closed);
+    }
+
+    [Fact]
     public void Constructor_RejectsDirectories()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
