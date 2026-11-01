@@ -12,6 +12,15 @@ REQUIRED = (
     'LICENSE', 'THIRD-PARTY-NOTICES.md', 'config/settings.default.json',
     'locales/en.json', 'locales/fr.json', 'locales/es.json',
     'Assets/Terminal/VENDORED.json',
+    'THIRD-PARTY-LICENSES/libgit2-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/noVNC-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/noVNC-MPL-2.0.txt',
+    'THIRD-PARTY-LICENSES/xterm-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/SQLite-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/WebView2-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/WebView2-NOTICE.txt',
+    'THIRD-PARTY-LICENSES/remark-math-LICENSE.txt',
+    'THIRD-PARTY-LICENSES/milkdown-dependencies-LICENSES.txt',
 )
 
 

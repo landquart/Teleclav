@@ -17,6 +17,15 @@ FILES = {
     'THIRD-PARTY-NOTICES.md': b'notices', 'config/settings.default.json': b'{}',
     'locales/en.json': b'{}', 'locales/fr.json': b'{}', 'locales/es.json': b'{}',
     'Assets/Terminal/VENDORED.json': b'{}',
+    'THIRD-PARTY-LICENSES/libgit2-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/noVNC-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/noVNC-MPL-2.0.txt': b'license',
+    'THIRD-PARTY-LICENSES/xterm-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/SQLite-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/WebView2-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/WebView2-NOTICE.txt': b'notice',
+    'THIRD-PARTY-LICENSES/remark-math-LICENSE.txt': b'license',
+    'THIRD-PARTY-LICENSES/milkdown-dependencies-LICENSES.txt': b'license',
     'Heimdall.runtimeconfig.json': json.dumps({'runtimeOptions': {'includedFrameworks': [{'name': 'Microsoft.NETCore.App'}, {'name': 'Microsoft.WindowsDesktop.App'}]}}).encode(),
 }
 
@@ -97,6 +106,12 @@ class PortableArchiveTests(unittest.TestCase):
             archive = Path(tmp) / 'bad.zip'; archive.write_bytes(b'not zip')
             result = subprocess.run([sys.executable, str(CHECK), str(archive)], capture_output=True, text=True)
             self.assertNotEqual(0, result.returncode)
+
+    def test_missing_bundled_license_fails(self):
+        files = dict(FILES); del files['THIRD-PARTY-LICENSES/libgit2-LICENSE.txt']
+        result = self.check(files)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('libgit2-LICENSE.txt', result.stderr)
 
     def test_missing_notice_fails(self):
         files = dict(FILES); del files['LICENSE']

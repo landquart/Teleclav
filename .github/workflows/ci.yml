@@ -214,6 +214,12 @@ jobs:
       - name: Check project files and license notices
         run: python scripts/check_repository_integrity.py
 
+      - name: Check Milkdown license inventory
+        run: >
+          python scripts/check_milkdown_license_inventory.py
+          src/Heimdall.App/Assets/milkdown-editor/package-lock.json
+          THIRD-PARTY-LICENSES/milkdown-dependencies-LICENSES.txt
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -250,6 +256,7 @@ jobs:
         run: |
           if (-not (Test-Path 'artifacts/portable/Heimdall.exe')) { throw 'Published application is missing.' }
           Copy-Item LICENSE,THIRD-PARTY-NOTICES.md artifacts/portable/
+          Copy-Item -Recurse THIRD-PARTY-LICENSES artifacts/portable/
           New-Item -ItemType Directory -Path artifacts/portable/test-tools | Out-Null
           Copy-Item scripts/drag_drop_fixture.py,scripts/Compare-DragDropManifest.ps1,docs/DRAG_DROP_ACCEPTANCE.md artifacts/portable/test-tools/
           Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/Teleclav-portable-win-x64.zip

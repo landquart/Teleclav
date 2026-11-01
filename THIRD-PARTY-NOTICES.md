@@ -31,7 +31,11 @@ These are committed to the repository and shipped inside the installer.
 | PuTTY `plink.exe` | Release 0.83 | Simon Tatham | MIT | https://www.chiark.greenend.org.uk/~sgtatham/putty/ |
 | gsudo `gsudo.exe` | 2.5.1 | Gerardo Grignoli | MIT | https://github.com/gerardog/gsudo |
 | draw.io embed | 31.4.5 | JGraph Ltd | Apache-2.0 | https://github.com/jgraph/drawio |
-| Microsoft Edge WebView2 SDK | 1.0.2903.40 | Microsoft Corporation | Proprietary, redistributable | https://developer.microsoft.com/microsoft-edge/webview2/ |
+| xterm.js and add-ons | 5.5.0 / 0.10.0 / 0.18.0 | xterm.js contributors | MIT | https://github.com/xtermjs/xterm.js |
+| noVNC core | 1.5.0 | noVNC authors | MPL-2.0 | https://github.com/novnc/noVNC |
+| pako | 1.0.3 | pako authors | MIT / Zlib | https://github.com/nodeca/pako |
+| Milkdown | 7.23.0 | Milkdown contributors | MIT | https://github.com/Milkdown/milkdown |
+| Microsoft Edge WebView2 SDK | 1.0.2903.40 | Microsoft Corporation | BSD-style package licence; see bundled licence and notice | https://developer.microsoft.com/microsoft-edge/webview2/ |
 
 PuTTY is copyright 1997-2026 Simon Tatham. Only `plink.exe` is redistributed, not
 the full PuTTY suite.
@@ -40,18 +44,28 @@ The draw.io tree under `src/Heimdall.App/Assets/drawio/` is a pruned subset of t
 upstream distribution; what was removed and why is recorded in
 [VENDORED.md](src/Heimdall.App/Assets/drawio/VENDORED.md).
 
-### The one non-OSI component
+### WebView2 SDK and runtime
 
-The three WebView2 assemblies in `src/Heimdall.App/lib/webview2/`
-(`Microsoft.Web.WebView2.Core.dll`, `Microsoft.Web.WebView2.Wpf.dll`,
-`WebView2Loader.dll`) are Microsoft redistributables. They are freely
-redistributable under the Microsoft Edge WebView2 SDK licence terms, but that
-licence is proprietary rather than OSI-approved. Every other component Heimdall
-ships carries an OSI-approved licence.
+The Microsoft.Web.WebView2 1.0.2903.40 NuGet package contains a BSD-style
+`LICENSE.txt` and a separate third-party `NOTICE.txt`. Both are included in
+`THIRD-PARTY-LICENSES/`. The application also requires Microsoft Edge WebView2
+Evergreen Runtime, a separately installed Microsoft runtime. Availability of
+complete corresponding source for all WebView2 binaries has not been verified;
+therefore an exclusively open-source dependency claim remains unproven.
 
-This is called out on purpose: open-source code-signing programs ask whether a
-project contains proprietary components, and WebView2 is the only honest answer
-for Heimdall.
+## Included third-party licence texts
+
+The portable ZIP includes `THIRD-PARTY-LICENSES/` with licence texts for xterm.js,
+noVNC, libgit2 and SQLite, and a conservative inventory of non-dev npm package
+licence texts for the Milkdown build. This inventory includes packages that may
+not be shipped in the bundle. The libgit2 native package includes GPL-2.0 terms with
+a linking exception and additional notices: read the bundled text in full. The
+noVNC core source included in this build is available in the Teleclav repository:
+https://github.com/landquart/Teleclav/tree/8010d81b7f1c48887a17ab33de2df36167e475d5/src/Heimdall.App/Assets/vnc/core
+and upstream at https://github.com/novnc/noVNC/tree/v1.5.0/core. The pako licence
+is included with its vendored files. These additions do not establish
+that all transitive dependency notices are complete; verify redistribution terms
+and copyright notices for the actual shipped bundle before release.
 
 ## NuGet packages redistributed with the application
 
@@ -65,6 +79,8 @@ Direct references from the shipped projects under `src/`.
 | JsonSchema.Net | 7.0.4 | MIT |
 | Konscious.Security.Cryptography.Argon2 | 1.3.1 | MIT |
 | LibGit2Sharp | 0.31.0 | MIT |
+| LibGit2Sharp.NativeBinaries (libgit2) | 2.0.323 | GPL-2.0-only with linking exception; see bundled licence |
+| SQLite | 3.53.4 | Public domain declaration; see bundled licence |
 | Microsoft.EntityFrameworkCore.Sqlite | 10.0.14 | MIT |
 | Microsoft.Extensions.Caching.Memory | 10.0.14 | MIT |
 | Microsoft.Extensions.DependencyInjection | 10.0.14 | MIT |
@@ -100,7 +116,7 @@ They are listed for completeness, not as a redistribution notice.
 | Microsoft.Extensions.TimeProvider.Testing | 10.8.0 | MIT |
 | Microsoft.NET.Test.Sdk | 17.14.1 | MIT |
 | Xunit.StaFact | 1.1.11 | MS-PL |
-| coverlet.collector | 6.0.4, 10.0.1 | MIT |
+| coverlet.collector | 10.1.0 | MIT |
 | xunit | 2.9.3 | Apache-2.0 |
 | xunit.runner.visualstudio | 3.1.4 | Apache-2.0 |
 
