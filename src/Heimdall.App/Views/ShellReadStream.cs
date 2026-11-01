@@ -8,7 +8,7 @@ namespace Heimdall.App.Views;
 /// <summary>A read-only COM stream backed by a temporary file, held until the Shell releases it.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ShellReadStream : IStream, IDisposable
+public sealed class ShellReadStream : IShellNativeStream, IDisposable
 {
     private readonly Stream _stream;
     private readonly string? _directory;
@@ -37,9 +37,20 @@ public sealed class ShellReadStream : IStream, IDisposable
 
     public void Read(byte[] buffer, int count, IntPtr read)
     {
-        int n;
-        lock (_gate) { n = _stream.Read(buffer, 0, count); }
+        int n = ReadBytes(buffer, count);
         if (read != IntPtr.Zero) { Marshal.WriteInt32(read, n); }
+    }
+
+    int IShellNativeStream.Read(byte[] buffer, int count, IntPtr read)
+    {
+        int n = ReadBytes(buffer, count);
+        if (read != IntPtr.Zero) { Marshal.WriteInt32(read, n); }
+        return n == count ? 0 : 1;
+    }
+
+    private int ReadBytes(byte[] buffer, int count)
+    {
+        lock (_gate) { return _stream.Read(buffer, 0, count); }
     }
 
     public void Seek(long move, int origin, IntPtr position)
@@ -91,4 +102,25 @@ public sealed class ShellReadStream : IStream, IDisposable
     public void LockRegion(long offset, long count, int type) => throw new COMException("Not supported", unchecked((int)0x80030001));
     public void UnlockRegion(long offset, long count, int type) => throw new COMException("Not supported", unchecked((int)0x80030001));
     public void Clone(out IStream clone) => throw new COMException("Not supported", unchecked((int)0x80030001));
+}
+
+// ComTypes.IStream.Read discards successful HRESULTs. Explorer needs the native
+// IStream IID and S_FALSE on short reads, so preserve the Read return value.
+[ComVisible(true)]
+[Guid("0000000C-0000-0000-C000-000000000046")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IShellNativeStream
+{
+    [PreserveSig]
+    int Read([Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] byte[] buffer, int count, IntPtr read);
+    void Write([In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] byte[] buffer, int count, IntPtr written);
+    void Seek(long move, int origin, IntPtr position);
+    void SetSize(long size);
+    void CopyTo(IStream target, long count, IntPtr read, IntPtr written);
+    void Commit(int flags);
+    void Revert();
+    void LockRegion(long offset, long count, int type);
+    void UnlockRegion(long offset, long count, int type);
+    void Stat(out STATSTG stat, int flags);
+    void Clone(out IStream clone);
 }

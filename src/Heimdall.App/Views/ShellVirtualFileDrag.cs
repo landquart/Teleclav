@@ -160,7 +160,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
                 var stream = new ShellReadStream(file);
                 try
                 {
-                    medium.unionmember = Marshal.GetComInterfaceForObject(stream, typeof(IStream));
+                    medium.unionmember = Marshal.GetComInterfaceForObject(stream, typeof(IShellNativeStream));
                     medium.tymed = TYMED.TYMED_ISTREAM;
                 }
                 catch

@@ -12,10 +12,37 @@ public sealed class ShellReadStreamTests
     private delegate int NativeRead(IntPtr self, IntPtr buffer, uint count, IntPtr read);
 
     [Fact]
+    public void NativeRead_FullReadSucceedsAndNextReadReportsEndOfStream()
+    {
+        using var stream = new ShellReadStream(new MemoryStream("hi"u8.ToArray()));
+        IntPtr com = Marshal.GetComInterfaceForObject(stream, typeof(IShellNativeStream));
+        IntPtr buffer = Marshal.AllocCoTaskMem(2);
+        IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
+        try
+        {
+            Guid iid = typeof(IStream).GUID;
+            Assert.Equal(0, Marshal.QueryInterface(com, ref iid, out IntPtr queried));
+            Marshal.Release(queried);
+            IntPtr vtable = Marshal.ReadIntPtr(com);
+            var nativeRead = Marshal.GetDelegateForFunctionPointer<NativeRead>(Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
+            Assert.Equal(0, nativeRead(com, buffer, 2, read));
+            Assert.Equal(2, Marshal.ReadInt32(read));
+            Assert.Equal(1, nativeRead(com, buffer, 2, read));
+            Assert.Equal(0, Marshal.ReadInt32(read));
+        }
+        finally
+        {
+            Marshal.Release(com);
+            Marshal.FreeCoTaskMem(buffer);
+            Marshal.FreeCoTaskMem(read);
+        }
+    }
+
+    [Fact]
     public void NativeRead_ReturnsSFalseWhenEndOfStreamIsReached()
     {
         using var stream = new ShellReadStream(new MemoryStream("hi"u8.ToArray()));
-        IntPtr com = Marshal.GetComInterfaceForObject(stream, typeof(IStream));
+        IntPtr com = Marshal.GetComInterfaceForObject(stream, typeof(IShellNativeStream));
         IntPtr buffer = Marshal.AllocCoTaskMem(4);
         IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
         try
