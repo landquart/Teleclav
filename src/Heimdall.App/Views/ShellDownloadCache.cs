@@ -107,12 +107,18 @@ internal sealed class ShellDownloadCache : IDisposable
             _disposed = true;
         }
 
-        // Cancellation callbacks can run arbitrary code; never invoke them under the cache lock.
-        try { _stop.Cancel(); }
+        // Cancellation callbacks can block. Signal immediately, but do not run them on the caller.
+        try { _ = ObserveCancellationAsync(_stop.CancelAsync()); }
         finally
         {
             lock (_gate) { CleanupIfFinished(); }
         }
+    }
+
+    private static async Task ObserveCancellationAsync(Task cancellation)
+    {
+        try { await cancellation.ConfigureAwait(false); }
+        catch (Exception) { Heimdall.Core.Logging.FileLogger.Warn("A Shell cancellation callback failed."); }
     }
 
     private void ReleaseReader()

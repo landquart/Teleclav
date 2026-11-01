@@ -6,6 +6,17 @@ namespace Heimdall.App.Tests;
 public sealed class ShellAsyncLifetimeTests
 {
     [Fact]
+    public async Task MissingEndOperation_EventuallyReleasesAfterDragReturns()
+    {
+        var cleaned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lifetime = new ShellAsyncLifetime(() => cleaned.TrySetResult(), TimeSpan.FromMilliseconds(50));
+        Assert.True(lifetime.Begin());
+        lifetime.DragReturned();
+        await cleaned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        lifetime.End();
+    }
+
+    [Fact]
     public void AsyncExtractionRetainsResourcesUntilBothOperationsFinish()
     {
         int cleaned = 0;
