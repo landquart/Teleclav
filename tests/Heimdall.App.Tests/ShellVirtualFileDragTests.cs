@@ -12,6 +12,50 @@ namespace Heimdall.App.Tests;
 public sealed class ShellVirtualFileDragTests
 {
     [Fact]
+    public void CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation()
+    {
+        using ShellVirtualFileDrag drag = CreateDrag();
+        int closed = 0;
+        drag.Closed = () => Interlocked.Increment(ref closed);
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        drag.Cancel();
+        drag.Dispose();
+        Assert.Equal(1, closed);
+        Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 0));
+        Assert.Equal(1, closed);
+    }
+
+    [Fact]
+    public void CancellationAfterGetData_DoesNotInvalidateTheIssuedStream()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ((BrowserProxy)browser).ProvideContent = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
+        try
+        {
+            drag.Cancel();
+            drag.Dispose();
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+            Assert.True(Directory.Exists(directory));
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+        Assert.False(Directory.Exists(directory));
+    }
+
+    [Fact]
     public void Constructor_RejectsDirectories()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
