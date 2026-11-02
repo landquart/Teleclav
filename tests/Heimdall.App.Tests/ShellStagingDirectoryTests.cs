@@ -9,6 +9,26 @@ namespace Heimdall.App.Tests;
 public sealed class ShellStagingDirectoryTests
 {
     [Fact]
+    public async Task CacheCreatedDirectory_HasProtectedAclAndInheritedExecuteDenial()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None);
+        var user = WindowsIdentity.GetCurrent().User!;
+        var allowed = new HashSet<SecurityIdentifier>
+        {
+            user, new(WellKnownSidType.BuiltinAdministratorsSid, null), new(WellKnownSidType.LocalSystemSid, null)
+        };
+        DirectorySecurity security = new DirectoryInfo(cache.DirectoryPath).GetAccessControl();
+        Assert.True(security.AreAccessRulesProtected);
+        AssertOnlyAllowed(security, allowed);
+        FileSecurity child = new FileInfo(Path.Combine(cache.DirectoryPath, "0")).GetAccessControl();
+        Assert.Contains(child.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>(),
+            rule => rule.IdentityReference.Equals(user) && rule.AccessControlType == AccessControlType.Deny
+                && (rule.FileSystemRights & FileSystemRights.ExecuteFile) != 0);
+    }
+
+    [Fact]
     public void Guard_PreventsRenamingAnAncestorUntilCleanup()
     {
         if (!OperatingSystem.IsWindows()) { return; }
