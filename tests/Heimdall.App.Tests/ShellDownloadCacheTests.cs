@@ -7,6 +7,32 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public void Creation_RefusesReplacementBeforeGuardIsAcquired()
+    {
+        string? original = null;
+        string? moved = null;
+        bool blocked = false;
+        try
+        {
+            var cache = new ShellDownloadCache(1, (_, _, _) => Task.CompletedTask, created: path =>
+            {
+                original = path;
+                moved = path + "-original";
+                try { Directory.Move(path, moved); }
+                catch (IOException) { blocked = true; return; }
+                Directory.CreateDirectory(path);
+            });
+            cache.Dispose();
+            Assert.True(blocked || Directory.Exists(original));
+        }
+        finally
+        {
+            if (original is not null && Directory.Exists(original)) { Directory.Delete(original, recursive: true); }
+            if (moved is not null && Directory.Exists(moved)) { Directory.Delete(moved, recursive: true); }
+        }
+    }
+
+    [Fact]
     public void Cleanup_RefusesReplacedStagingDirectory()
     {
         var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));

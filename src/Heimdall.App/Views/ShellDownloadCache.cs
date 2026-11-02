@@ -21,7 +21,8 @@ internal sealed class ShellDownloadCache : IDisposable
     private bool _retryScheduled;
     private Exception? _cleanupFailure;
 
-    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null)
+    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null,
+        Action<string>? created = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _download = download ?? throw new ArgumentNullException(nameof(download));
@@ -30,6 +31,7 @@ internal sealed class ShellDownloadCache : IDisposable
         if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
             throw new ArgumentOutOfRangeException(nameof(waitLimit));
         DirectoryPath = ShellStagingDirectory.Create();
+        created?.Invoke(DirectoryPath);
         if (OperatingSystem.IsWindows()) { _guard = new ShellStagingGuard(DirectoryPath); }
     }
 
