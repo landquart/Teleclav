@@ -31,6 +31,7 @@ internal sealed class ShellDownloadCache : IDisposable
 
     internal string DirectoryPath { get; }
     internal CancellationToken StopToken => _stop.Token;
+    internal Exception? CleanupFailure => null;
 
     internal async Task<Stream> OpenAsync(int index, long size, CancellationToken cancellationToken)
     {
