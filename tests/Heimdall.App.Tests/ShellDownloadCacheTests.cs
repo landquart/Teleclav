@@ -84,6 +84,26 @@ public sealed class ShellDownloadCacheTests
     }
 
     [Fact]
+    public async Task LockedStagingFile_IsRetriedAfterUnlock()
+    {
+        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        string directory = cache.DirectoryPath;
+        try
+        {
+            using (Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None)) { }
+            using (FileStream locked = new(Path.Combine(directory, "0"), FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                cache.Dispose();
+                Assert.NotNull(cache.CleanupFailure);
+            }
+            for (int i = 0; i < 50 && Directory.Exists(directory); i++) { await Task.Delay(100); }
+            Assert.False(Directory.Exists(directory));
+            Assert.Null(cache.CleanupFailure);
+        }
+        finally { cache.Dispose(); }
+    }
+
+    [Fact]
     public async Task Dispose_DoesNotWaitForBlockingCancellationCallbacks()
     {
         var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

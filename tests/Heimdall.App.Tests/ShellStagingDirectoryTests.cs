@@ -9,6 +9,26 @@ namespace Heimdall.App.Tests;
 public sealed class ShellStagingDirectoryTests
 {
     [Fact]
+    public void Guard_PreventsRenamingAnAncestorUntilCleanup()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        string parent = Directory.CreateTempSubdirectory("teleclav-guard-test-").FullName;
+        string moved = parent + "-moved";
+        string staging = Directory.CreateDirectory(Path.Combine(parent, "stage")).FullName;
+        try
+        {
+            using var guard = new ShellStagingGuard(staging);
+            Assert.ThrowsAny<IOException>(() => Directory.Move(parent, moved));
+            guard.Delete();
+        }
+        finally
+        {
+            if (Directory.Exists(parent)) { Directory.Delete(parent, recursive: true); }
+            if (Directory.Exists(moved)) { Directory.Delete(moved, recursive: true); }
+        }
+    }
+
+    [Fact]
     public void StagedExecutable_CannotBeStartedByCurrentUser()
     {
         if (!OperatingSystem.IsWindows()) { return; }
