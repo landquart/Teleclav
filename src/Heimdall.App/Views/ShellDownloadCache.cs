@@ -30,9 +30,13 @@ internal sealed class ShellDownloadCache : IDisposable
         _waitLimit = waitLimit ?? TimeSpan.FromMinutes(30);
         if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
             throw new ArgumentOutOfRangeException(nameof(waitLimit));
-        DirectoryPath = ShellStagingDirectory.Create();
+        if (OperatingSystem.IsWindows())
+        {
+            _guard = ShellStagingGuard.Create();
+            DirectoryPath = _guard.DirectoryPath;
+        }
+        else { DirectoryPath = ShellStagingDirectory.Create(); }
         created?.Invoke(DirectoryPath);
-        if (OperatingSystem.IsWindows()) { _guard = new ShellStagingGuard(DirectoryPath); }
     }
 
     internal string DirectoryPath { get; }

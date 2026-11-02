@@ -25,7 +25,14 @@ internal sealed class ShellStagingGuard : IDisposable
     private readonly string _path;
     private SafeFileHandle? _directory;
 
-    internal ShellStagingGuard(string path)
+    internal string DirectoryPath => _path;
+
+    internal static ShellStagingGuard Create()
+        => new(Path.Combine(Path.GetTempPath(), "teleclav-drag-" + Guid.NewGuid().ToString("N")), create: true);
+
+    internal ShellStagingGuard(string path) : this(path, create: false) { }
+
+    private ShellStagingGuard(string path, bool create)
     {
         _path = Path.GetFullPath(path);
         try
@@ -35,11 +42,18 @@ internal sealed class ShellStagingGuard : IDisposable
             while (parent is not null) { parents.Push(parent.FullName); parent = parent.Parent; }
             while (parents.TryPop(out string? item))
             {
-                SafeFileHandle handle = Open(item, ReadAttributes);
+                uint access = create && parents.Count == 0 ? ReadAttributes | 0x24u : ReadAttributes;
+                SafeFileHandle handle = Open(item, access);
                 _ancestors.Add(handle);
                 RequireDirectory(handle);
             }
-            _directory = Open(_path, DeleteAccess | ReadAttributes);
+            if (create)
+            {
+                string parentPath = Path.GetDirectoryName(_path) ?? throw new IOException("Missing staging parent.");
+                ShellStagingDirectory.EnsureVolumeSupportsAcl(parentPath);
+                _directory = CreateRelative(_ancestors[^1], Path.GetFileName(_path), ShellStagingDirectory.CreateSecurityDescriptor());
+            }
+            else { _directory = Open(_path, DeleteAccess | ReadAttributes); }
             RequireDirectory(_directory);
         }
         catch
@@ -126,6 +140,70 @@ internal sealed class ShellStagingGuard : IDisposable
         if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
             throw new IOException("Unable to delete a verified staging object.", new Win32Exception(Marshal.GetLastWin32Error()));
     }
+
+    private static SafeFileHandle CreateRelative(SafeFileHandle parent, string name, byte[] descriptor)
+    {
+        IntPtr nameBuffer = Marshal.StringToHGlobalUni(name);
+        IntPtr unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+        GCHandle security = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        try
+        {
+            var unicode = new UnicodeString
+            {
+                Length = checked((ushort)(name.Length * 2)),
+                MaximumLength = checked((ushort)((name.Length + 1) * 2)),
+                Buffer = nameBuffer,
+            };
+            Marshal.StructureToPtr(unicode, unicodePointer, false);
+            var attributes = new ObjectAttributes
+            {
+                Length = Marshal.SizeOf<ObjectAttributes>(),
+                RootDirectory = parent.DangerousGetHandle(),
+                ObjectName = unicodePointer,
+                Attributes = 0x40,
+                SecurityDescriptor = security.AddrOfPinnedObject(),
+            };
+            int status = NtCreateFile(out SafeFileHandle handle, DeleteAccess | ReadAttributes | 0x00100000,
+                ref attributes, out _, IntPtr.Zero, DirectoryAttribute, ShareReadWrite, 2, 0x21, IntPtr.Zero, 0);
+            if (status < 0)
+            {
+                handle?.Dispose();
+                throw new IOException("Unable to create staging directory safely.", new Win32Exception((int)RtlNtStatusToDosError(status)));
+            }
+            return handle;
+        }
+        finally
+        {
+            security.Free();
+            Marshal.FreeHGlobal(unicodePointer);
+            Marshal.FreeHGlobal(nameBuffer);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString { internal ushort Length; internal ushort MaximumLength; internal IntPtr Buffer; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ObjectAttributes
+    {
+        internal int Length;
+        internal IntPtr RootDirectory;
+        internal IntPtr ObjectName;
+        internal uint Attributes;
+        internal IntPtr SecurityDescriptor;
+        internal IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatusBlock { internal IntPtr Status; internal UIntPtr Information; }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtCreateFile(out SafeFileHandle handle, uint access, ref ObjectAttributes attributes,
+        out IoStatusBlock ioStatus, IntPtr allocationSize, uint fileAttributes, uint share, uint disposition,
+        uint options, IntPtr eaBuffer, uint eaLength);
+
+    [DllImport("ntdll.dll")]
+    private static extern uint RtlNtStatusToDosError(int status);
 
     private readonly record struct FileIdentity(uint Attributes, uint Volume, uint IndexHigh, uint IndexLow);
 

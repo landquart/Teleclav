@@ -22,27 +22,8 @@ internal static class ShellStagingDirectory
     private static string CreateWindows()
     {
         string parent = Path.GetTempPath();
-        var volume = new StringBuilder(32768);
-        if (!GetVolumePathName(parent, volume, volume.Capacity)
-            || !GetVolumeInformation(volume.ToString(), null, 0, out _, out _, out uint flags, null, 0))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot verify staging volume permissions.");
-        if ((flags & 0x8) == 0) { throw new IOException("The temporary volume does not support persistent access controls."); }
-
-        SecurityIdentifier user = WindowsIdentity.GetCurrent().User
-            ?? throw new InvalidOperationException("Cannot determine the current Windows user.");
-        var security = new DirectorySecurity();
-        security.SetAccessRuleProtection(true, false);
-        const InheritanceFlags inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-        foreach (SecurityIdentifier sid in new[] { user, new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                     new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
-            security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, inheritance,
-                PropagationFlags.None, AccessControlType.Allow));
-        // Files remain readable and writable but are not executable by the current user.
-        // This does not constrain administrators or an owner who changes the ACL.
-        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.ExecuteFile,
-            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny));
-
-        byte[] descriptor = security.GetSecurityDescriptorBinaryForm();
+        EnsureVolumeSupportsAcl(parent);
+        byte[] descriptor = CreateSecurityDescriptor();
         GCHandle pinned = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
         try
         {
@@ -57,6 +38,36 @@ internal static class ShellStagingDirectory
             return path;
         }
         finally { pinned.Free(); }
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal static void EnsureVolumeSupportsAcl(string parent)
+    {
+        var volume = new StringBuilder(32768);
+        if (!GetVolumePathName(parent, volume, volume.Capacity)
+            || !GetVolumeInformation(volume.ToString(), null, 0, out _, out _, out uint flags, null, 0))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot verify staging volume permissions.");
+        if ((flags & 0x8) == 0) { throw new IOException("The temporary volume does not support persistent access controls."); }
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal static byte[] CreateSecurityDescriptor()
+    {
+        SecurityIdentifier user = WindowsIdentity.GetCurrent().User
+            ?? throw new InvalidOperationException("Cannot determine the current Windows user.");
+        var security = new DirectorySecurity();
+        security.SetAccessRuleProtection(true, false);
+        const InheritanceFlags inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        foreach (SecurityIdentifier sid in new[] { user, new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                     new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+            security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, inheritance,
+                PropagationFlags.None, AccessControlType.Allow));
+        // Files remain readable and writable but are not executable by the current user.
+        // This does not constrain administrators or an owner who changes the ACL.
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.ExecuteFile,
+            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Deny));
+
+        return security.GetSecurityDescriptorBinaryForm();
     }
 
     [StructLayout(LayoutKind.Sequential)]
