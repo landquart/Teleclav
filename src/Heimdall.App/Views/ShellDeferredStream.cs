@@ -63,7 +63,8 @@ internal sealed class ShellDeferredStream : Stream
     private static async Task ReleaseOpenAsync(Task<Stream> open)
     {
         try { (await open.ConfigureAwait(false)).Dispose(); }
-        catch (Exception) { /* The consumer observes failures when it reads. */ }
+        catch (OperationCanceledException) { }
+        catch (Exception) { Heimdall.Core.Logging.FileLogger.Warn("A deferred Shell stream failed while releasing its pending file."); }
     }
 
     private static async Task ObserveCancellationAsync(Task cancellation)

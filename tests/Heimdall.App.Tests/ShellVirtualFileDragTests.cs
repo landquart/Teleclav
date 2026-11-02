@@ -69,7 +69,7 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
-    public async Task DisposeDuringPendingRead_UnblocksTheReader()
+    public async Task DisposeAndReadWhileDownloadPending_DoNotHang()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         BrowserProxy proxy = (BrowserProxy)browser;
