@@ -7,6 +7,34 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public void Cleanup_RefusesReplacedStagingDirectory()
+    {
+        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        string original = cache.DirectoryPath;
+        string moved = original + "-moved";
+        string sentinel = Path.Combine(original, "unrelated.txt");
+        try
+        {
+            try { Directory.Move(original, moved); }
+            catch (IOException)
+            {
+                Assert.True(Directory.Exists(original));
+                cache.Dispose();
+                return;
+            }
+            Directory.CreateDirectory(original);
+            File.WriteAllText(sentinel, "preserve");
+            cache.Dispose();
+            Assert.True(File.Exists(sentinel));
+        }
+        finally
+        {
+            if (Directory.Exists(original)) { Directory.Delete(original, recursive: true); }
+            if (Directory.Exists(moved)) { Directory.Delete(moved, recursive: true); }
+        }
+    }
+
+    [Fact]
     public async Task LockedStagingFile_CleanupFailureIsObservable()
     {
         var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
