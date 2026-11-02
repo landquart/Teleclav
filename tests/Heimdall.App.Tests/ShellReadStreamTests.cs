@@ -12,6 +12,31 @@ public sealed class ShellReadStreamTests
     private delegate int NativeRead(IntPtr self, IntPtr buffer, uint count, IntPtr read);
 
     [Fact]
+    public void NativeRead_StagingFailureReturnsFailingHResult()
+    {
+        Exception? reported = null;
+        using var inner = new ShellDeferredStream(_ => Task.FromException<Stream>(new IOException("network")),
+            5, ex => reported = ex, () => { });
+        using var stream = new ShellReadStream(inner);
+        IntPtr com = Marshal.GetComInterfaceForObject(stream, typeof(IShellNativeStream));
+        IntPtr buffer = Marshal.AllocCoTaskMem(5);
+        IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
+        try
+        {
+            IntPtr vtable = Marshal.ReadIntPtr(com);
+            var nativeRead = Marshal.GetDelegateForFunctionPointer<NativeRead>(Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size));
+            Assert.True(nativeRead(com, buffer, 5, read) < 0);
+            Assert.IsType<IOException>(reported);
+        }
+        finally
+        {
+            Marshal.Release(com);
+            Marshal.FreeCoTaskMem(buffer);
+            Marshal.FreeCoTaskMem(read);
+        }
+    }
+
+    [Fact]
     public void NativeRead_FullReadSucceedsAndNextReadReportsEndOfStream()
     {
         using var stream = new ShellReadStream(new MemoryStream("hi"u8.ToArray()));

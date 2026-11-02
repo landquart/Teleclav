@@ -83,14 +83,14 @@ public sealed class ShellVirtualFileDragTests
         try
         {
             await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Task<Exception?> read = Task.Run(() =>
+            Task<Exception> read = Task.Run(() =>
             {
                 reading.SetResult();
                 return Record.Exception(() => stream.Read(new byte[5], 5, IntPtr.Zero));
             });
             await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Run(stream.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
-            Exception? failure = await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Exception failure = await read.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(failure is COMException or ObjectDisposedException);
         }
         finally
