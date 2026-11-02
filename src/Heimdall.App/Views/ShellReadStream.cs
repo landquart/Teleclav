@@ -22,6 +22,7 @@ public sealed class ShellReadStream : IShellNativeStream, IDisposable
 
     public void Dispose()
     {
+        if (_stream is ShellDeferredStream deferred) { deferred.CancelPending(); }
         lock (_gate)
         {
             if (_disposed) { return; }

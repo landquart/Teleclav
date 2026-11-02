@@ -10,6 +10,7 @@ internal sealed class ShellAsyncLifetime
     private System.Threading.Timer? _timer;
     private int _generation;
     private int _callbacks;
+    private int _streams;
     private bool _inOperation;
     private bool _started;
     private bool _dragReturned;
@@ -62,6 +63,28 @@ internal sealed class ShellAsyncLifetime
         if (clean) { _cleanup(); }
     }
 
+    internal bool HoldStream()
+    {
+        lock (_gate)
+        {
+            if (_cleaned || _cancelled) { return false; }
+            _streams++;
+            return true;
+        }
+    }
+
+    internal void ReleaseStream()
+    {
+        bool clean;
+        lock (_gate)
+        {
+            _streams--;
+            clean = MarkCleanup();
+            if (!clean) { ArmIfIdle(); }
+        }
+        if (clean) { _cleanup(); }
+    }
+
     internal void End()
     {
         bool clean;
@@ -98,7 +121,7 @@ internal sealed class ShellAsyncLifetime
 
     private bool MarkCleanup()
     {
-        if (!_dragReturned || _callbacks != 0 || (_inOperation && !_cancelled) || _cleaned) { return false; }
+        if (!_dragReturned || _callbacks != 0 || ((_inOperation || _streams != 0) && !_cancelled) || _cleaned) { return false; }
         _cleaned = true;
         Disarm();
         return true;

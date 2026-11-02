@@ -175,7 +175,19 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
             SftpFileInfo fileEntry = _files[format.lindex];
             try
             {
-                Stream file = _cache.OpenAsync(format.lindex, fileEntry.Size, _cache.StopToken).GetAwaiter().GetResult();
+                if (!_lifetime.HoldStream()) { throw new OperationCanceledException(); }
+                int index = format.lindex;
+                ShellDeferredStream file;
+                try
+                {
+                    file = new ShellDeferredStream(ct => _cache.OpenAsync(index, fileEntry.Size, ct), fileEntry.Size,
+                        ex => Interlocked.CompareExchange(ref _transferError, ex, null), _lifetime.ReleaseStream);
+                }
+                catch
+                {
+                    _lifetime.ReleaseStream();
+                    throw;
+                }
                 var stream = new ShellReadStream(file);
                 try
                 {

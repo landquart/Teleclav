@@ -1,6 +1,6 @@
 # Shell drag: concurrency, cancellation and ownership
 
-Status: **incomplete acceptance**. Interactive Explorer and UI responsiveness under a stalled remote server have not been tested. The synchronous `GetData` callback still waits for complete, verified staging. `Task.Run` moves SFTP work to the pool but does not release the COM caller. A synchronous target or COM apartment dispatch onto the WPF STA can therefore still freeze the source UI. Async extraction is an optional negotiation with the target, not a guarantee. No full nonblocking behavior is claimed.
+Status: **incomplete acceptance**. Interactive Explorer and UI responsiveness under a stalled remote server have not been tested. `GetData` returns an IStream while staging proceeds in the background. The stream waits for complete, verified staging when a recipient reads or seeks. A synchronous target or COM apartment dispatch onto the WPF STA can therefore still freeze the source UI during those calls. Async extraction is an optional negotiation with the target, not a guarantee. No full nonblocking behavior is claimed.
 
 ```mermaid
 sequenceDiagram
@@ -12,11 +12,12 @@ sequenceDiagram
     UI->>OLE: DoDragDrop
     OLE->>Drag: StartOperation (optional)
     OLE->>Drag: GetData FileContents
-    Drag->>Cache: Open and synchronously wait
+    Drag->>Cache: Start asynchronous staging
+    Drag-->>OLE: Deferred IStream medium
     Cache->>SFTP: Download and validate
+    OLE->>Drag: Read or Seek (may wait)
     SFTP-->>Cache: Complete or fail
     Cache-->>Drag: Independent file lease
-    Drag-->>OLE: IStream medium
     OLE-->>UI: DoDragDrop returns
     OLE->>Drag: EndOperation (optional)
 ```
@@ -25,9 +26,9 @@ The target may call `GetData` before `DoDragDrop` returns or on its chosen apart
 
 ## Ownership and state
 
-The view tracks a cancellation delegate per drag. Closing the tab or disconnecting calls the registry's `Stop`, outside the registry lock. The drag owns one cache and an optional extra COM self-reference. `StartOperation` is accepted once while the drag is active. `EndOperation` plus return from `DoDragDrop` normally triggers one cleanup. On cancellation, cleanup may run after `DoDragDrop` returns even if `EndOperation` is absent. A late `EndOperation` is harmless. Cleanup is deferred while a `GetData` callback is active; after cleanup new callbacks are rejected.
+The view tracks a cancellation delegate per drag. Closing the tab or disconnecting calls the registry's `Stop`, outside the registry lock. The drag owns one cache and an optional extra COM self-reference. `StartOperation` is accepted once while the drag is active. `EndOperation` plus return from `DoDragDrop` normally triggers one cleanup. On cancellation, cleanup may run after `DoDragDrop` returns even if `EndOperation` is absent. A late `EndOperation` is harmless. Cleanup is deferred while a `GetData` callback is active and, in the absence of cancellation, while an issued stream is held; after cleanup new callbacks are rejected.
 
-A dropped target may not call `EndOperation`. Once the drag has returned and no `GetData` callback is active, an idle timer bounds retention of the source's self-reference and cache. Another `GetData` resets the timer; a callback that is already active prevents expiration. Expiry is logged and requests cache cancellation. The target's own COM references are not revoked, and already issued streams retain their individual cache leases. A client that remains idle beyond the limit and then requests more data receives a failure; configure a larger limit for long workflows. A held stream alone does not reset the idle timer.
+A dropped target may not call `EndOperation`. Once the drag has returned and no `GetData` callback is active, an idle timer bounds retention of the source's self-reference and cache. Another `GetData` resets the timer; a callback that is already active prevents expiration. Expiry is logged and requests cache cancellation. The target's own COM references are not revoked, and already issued streams retain their individual cache leases. A client that remains idle beyond the limit and then requests more data receives a failure; configure a larger limit for long workflows. A held stream alone does not reset the idle timer. For a synchronous target with no async operation, a retained stream can retain the cache until the target releases it and the managed wrapper is finalized.
 
 Each staged file is reserved against a 16 GiB per-drag quota. A single file's callers share one download; each successful open receives its own file position. The cache retains staging files while there are active downloads or reader leases; cleanup attempts deletion after both reach zero. A COM `Release` does not deterministically dispose the managed stream: the .NET finalizer may delay release of its lease. The timer does not forcibly close streams that a recipient still holds.
 
@@ -43,4 +44,4 @@ Escape before drop and a refused target end the drag; absent an asynchronous ope
 
 ## Verification and remaining work
 
-Windows tests cover cancellation without `EndOperation`, callback cancellation without waiting for an intentionally blocked callback, idle expiration, a callback active during the idle window, late completion, repeated cancellation, and reading an issued stream after cancellation. The existing cache tests include concurrent requests, a cancellation-ignoring download, repeated staged transfers and quota/size failures; the lifetime stress test races completion and return 1,000 times. See PR and CI for exact results. These are not a measurement of process memory, handle growth, Windows Explorer or an unresponsive SSH server. Tests of UI responsiveness, real network loss, Explorer cancellation, application shutdown, and sustained memory/handle behavior remain necessary.
+A Windows test also checks that GetData returns while a deliberately stalled download is still pending. Windows tests cover cancellation without `EndOperation`, callback cancellation without waiting for an intentionally blocked callback, idle expiration, a callback active during the idle window, late completion, repeated cancellation, and reading an issued stream after cancellation. The existing cache tests include concurrent requests, a cancellation-ignoring download, repeated staged transfers and quota/size failures; the lifetime stress test races completion and return 1,000 times. See PR and CI for exact results. These are not a measurement of process memory, handle growth, Windows Explorer or an unresponsive SSH server. Tests of UI responsiveness, real network loss, Explorer cancellation, application shutdown, and sustained memory/handle behavior remain necessary.
