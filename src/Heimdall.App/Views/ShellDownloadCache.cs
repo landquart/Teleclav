@@ -89,12 +89,11 @@ internal sealed class ShellDownloadCache : IDisposable
         try
         {
             await _download(index, path, _stop.Token).ConfigureAwait(false);
+            if (OperatingSystem.IsWindows()) { _guard!.Record(Path.GetFileName(path)); }
             if (new FileInfo(path).Length != expectedSize)
             {
                 throw new IOException("The remote file changed size during the transfer.");
             }
-
-            if (OperatingSystem.IsWindows()) { _guard!.Record(Path.GetFileName(path)); }
 
             return path;
         }
