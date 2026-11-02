@@ -9,6 +9,31 @@ namespace Heimdall.App.Tests;
 public sealed class ShellStagingDirectoryTests
 {
     [Fact]
+    public void StagedExecutable_CannotBeStartedByCurrentUser()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        string path = ShellStagingDirectory.Create();
+        System.Diagnostics.Process? process = null;
+        try
+        {
+            string executable = Path.Combine(path, "test.exe");
+            File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), executable);
+            var start = new System.Diagnostics.ProcessStartInfo(executable, "/c exit") { UseShellExecute = false };
+            Exception? error = Record.Exception(() => { process = System.Diagnostics.Process.Start(start); });
+            Assert.Equal(5, Assert.IsType<System.ComponentModel.Win32Exception>(error).NativeErrorCode);
+        }
+        finally
+        {
+            if (process is not null)
+            {
+                if (!process.HasExited) { process.Kill(); process.WaitForExit(); }
+                process.Dispose();
+            }
+            Directory.Delete(path, recursive: true);
+        }
+    }
+
+    [Fact]
     public void StagingDirectory_HasProtectedAclAndChildrenInheritOnlyAllowedIdentities()
     {
         if (!OperatingSystem.IsWindows()) { return; }

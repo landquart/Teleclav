@@ -17,6 +17,7 @@ internal sealed class ShellDownloadCache : IDisposable
     private int _downloads;
     private bool _disposed;
     private bool _cleaned;
+    private Exception? _cleanupFailure;
 
     internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null)
     {
@@ -31,7 +32,7 @@ internal sealed class ShellDownloadCache : IDisposable
 
     internal string DirectoryPath { get; }
     internal CancellationToken StopToken => _stop.Token;
-    internal Exception? CleanupFailure => null;
+    internal Exception? CleanupFailure { get { lock (_gate) { return _cleanupFailure; } } }
 
     internal async Task<Stream> OpenAsync(int index, long size, CancellationToken cancellationToken)
     {
@@ -136,9 +137,12 @@ internal sealed class ShellDownloadCache : IDisposable
     private void CleanupIfFinished()
     {
         if (!_disposed || _downloads != 0 || _readers != 0 || _cleaned) { return; }
-        try { Directory.Delete(DirectoryPath, recursive: true); _cleaned = true; }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        try { Directory.Delete(DirectoryPath, recursive: true); _cleaned = true; _cleanupFailure = null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _cleanupFailure = ex;
+            Heimdall.Core.Logging.FileLogger.Warn("Shell staging cleanup failed; temporary data may remain (" + ex.GetType().Name + ").");
+        }
     }
 
     private sealed record Entry(long Size, Task<string> Download);
