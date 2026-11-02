@@ -12,6 +12,142 @@ namespace Heimdall.App.Tests;
 public sealed class ShellVirtualFileDragTests
 {
     [Fact]
+    public async Task GetContents_ReturnsStreamBeforeRemoteDownloadCompletes()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        proxy.PauseDownload = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Task<STGMEDIUM> call = Task.Run(() =>
+        {
+            FORMATETC request = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+            drag.GetData(ref request, out STGMEDIUM result);
+            return result;
+        });
+        try
+        {
+            await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Same(call, await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(2))));
+        }
+        finally
+        {
+            proxy.ContinueDownload.TrySetResult();
+            STGMEDIUM medium = await call.WaitAsync(TimeSpan.FromSeconds(20));
+            var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task IssuedStream_RemainsUsableAfterSynchronousDragReturns()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        proxy.PauseDownload = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        FORMATETC request = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref request, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        try
+        {
+            await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            drag.Dispose();
+            proxy.ContinueDownload.TrySetResult();
+            byte[] data = new byte[5];
+            stream.Read(data, data.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(data));
+        }
+        finally
+        {
+            proxy.ContinueDownload.TrySetResult();
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAndReadWhileDownloadPending_DoNotHang()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        proxy.PauseDownload = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        FORMATETC request = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref request, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Task<Exception> read = Task.Run(() =>
+            {
+                reading.SetResult();
+                return Record.Exception(() => stream.Read(new byte[5], 5, IntPtr.Zero));
+            });
+            await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(stream.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            Exception failure = await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(failure is COMException or ObjectDisposedException);
+        }
+        finally
+        {
+            proxy.ContinueDownload.TrySetResult();
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+    }
+
+    [Fact]
+    public void CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation()
+    {
+        using ShellVirtualFileDrag drag = CreateDrag();
+        int closed = 0;
+        drag.Closed = () => Interlocked.Increment(ref closed);
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        drag.Cancel();
+        drag.Dispose();
+        Assert.Equal(1, closed);
+        Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 0));
+        Assert.Equal(1, closed);
+    }
+
+    [Fact]
+    public void CancellationAfterGetData_DoesNotInvalidateTheIssuedStream()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        ((BrowserProxy)browser).ProvideContent = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Assert.Equal(0, drag.SetAsyncMode(true));
+        Assert.Equal(0, drag.StartOperation(IntPtr.Zero));
+        FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        stream.Read(new byte[5], 5, IntPtr.Zero);
+        stream.Seek(0, 0, IntPtr.Zero);
+        string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
+        try
+        {
+            drag.Cancel();
+            drag.Dispose();
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
+            Assert.True(Directory.Exists(directory));
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+        Assert.False(Directory.Exists(directory));
+    }
+
+    [Fact]
     public void Constructor_RejectsDirectories()
     {
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
@@ -125,9 +261,19 @@ public sealed class ShellVirtualFileDragTests
         IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
         using ShellVirtualFileDrag drag = new(browser, FileEntry());
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
-        var error = Assert.Throws<COMException>(() => drag.GetData(ref contents, out _));
-        Assert.Equal("The file transfer did not complete.", error.Message);
-        Assert.IsType<FileNotFoundException>(drag.TransferError);
+        drag.GetData(ref contents, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        try
+        {
+            var error = Assert.Throws<COMException>(() => stream.Read(new byte[5], 5, IntPtr.Zero));
+            Assert.Equal("The file transfer did not complete.", error.Message);
+            Assert.IsType<FileNotFoundException>(drag.TransferError);
+        }
+        finally
+        {
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
         string attemptedPath = Assert.IsType<string>(((BrowserProxy)browser).LastPath);
         drag.Dispose();
         Assert.False(Directory.Exists(Path.GetDirectoryName(attemptedPath)));
@@ -189,13 +335,15 @@ public sealed class ShellVirtualFileDragTests
         FORMATETC contents = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
         drag.GetData(ref contents, out STGMEDIUM medium);
         ShellReadStream? stream = null;
-        string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
         try
         {
             stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            byte[] bytes = new byte[5];
+            stream.Read(bytes, bytes.Length, IntPtr.Zero);
+            stream.Seek(0, 0, IntPtr.Zero);
+            string directory = Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))!;
             Assert.Equal(0, drag.EndOperation(0, IntPtr.Zero, 1));
             Assert.True(Directory.Exists(directory));
-            byte[] bytes = new byte[5];
             stream.Read(bytes, bytes.Length, IntPtr.Zero);
             Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(bytes));
         }
@@ -204,7 +352,7 @@ public sealed class ShellVirtualFileDragTests
             Marshal.Release(medium.unionmember);
             stream?.Dispose();
         }
-        Assert.False(Directory.Exists(directory));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(Assert.IsType<string>(((BrowserProxy)browser).LastPath))));
     }
 
     [Fact]
@@ -240,6 +388,9 @@ public sealed class ShellVirtualFileDragTests
     public class BrowserProxy : DispatchProxy
     {
         public bool ProvideContent { get; set; }
+        public bool PauseDownload { get; set; }
+        public TaskCompletionSource DownloadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ContinueDownload { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? LastPath { get; private set; }
         public string? LastRemotePath { get; private set; }
 
@@ -257,8 +408,14 @@ public sealed class ShellVirtualFileDragTests
                 return Task.FromException(new FileNotFoundException("remote file"));
             }
 
-            File.WriteAllText((string)args![1]!, "hello");
-            return Task.CompletedTask;
+            return WriteAsync((string)args![1]!);
+        }
+
+        private async Task WriteAsync(string path)
+        {
+            DownloadStarted.TrySetResult();
+            if (PauseDownload) { await ContinueDownload.Task; }
+            await File.WriteAllTextAsync(path, "hello");
         }
     }
 }

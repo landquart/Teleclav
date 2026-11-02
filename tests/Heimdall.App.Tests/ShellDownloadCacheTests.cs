@@ -7,6 +7,33 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task Dispose_DoesNotWaitForBlockingCancellationCallbacks()
+    {
+        var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cache = new ShellDownloadCache(1, async (_, _, ct) =>
+        {
+            using var callback = ct.Register(() => release.Task.GetAwaiter().GetResult());
+            registered.SetResult();
+            await release.Task;
+            ct.ThrowIfCancellationRequested();
+        });
+        Task<Stream> waiting = cache.OpenAsync(0, 1, CancellationToken.None);
+        await registered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Task cancel = Task.Run(cache.Dispose);
+            await cancel.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(5)));
+            cache.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Timeout_StopsWaitingAndCancelsDownloadButRetainsActiveStaging()
     {
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
