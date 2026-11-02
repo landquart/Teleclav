@@ -69,6 +69,39 @@ public sealed class ShellVirtualFileDragTests
     }
 
     [Fact]
+    public async Task DisposeDuringPendingRead_UnblocksTheReader()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        proxy.PauseDownload = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        FORMATETC request = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+        drag.GetData(ref request, out STGMEDIUM medium);
+        var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Task<Exception?> read = Task.Run(() =>
+            {
+                reading.SetResult();
+                return Record.Exception(() => stream.Read(new byte[5], 5, IntPtr.Zero));
+            });
+            await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(stream.Dispose).WaitAsync(TimeSpan.FromSeconds(5));
+            Exception? failure = await read.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(failure is COMException or ObjectDisposedException);
+        }
+        finally
+        {
+            proxy.ContinueDownload.TrySetResult();
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+    }
+
+    [Fact]
     public void CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation()
     {
         using ShellVirtualFileDrag drag = CreateDrag();

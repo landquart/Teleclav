@@ -42,7 +42,7 @@ internal sealed class ShellDeferredStream : Stream
         }
     }
 
-    internal void CancelPending() => _ = _stop.CancelAsync();
+    internal void CancelPending() => _ = ObserveCancellationAsync(_stop.CancelAsync());
     public override int Read(byte[] buffer, int offset, int count) => Current.Read(buffer, offset, count);
     public override long Seek(long offset, SeekOrigin origin) => Current.Seek(offset, origin);
     public override void Flush() { }
@@ -64,5 +64,11 @@ internal sealed class ShellDeferredStream : Stream
     {
         try { (await open.ConfigureAwait(false)).Dispose(); }
         catch (Exception) { /* The consumer observes failures when it reads. */ }
+    }
+
+    private static async Task ObserveCancellationAsync(Task cancellation)
+    {
+        try { await cancellation.ConfigureAwait(false); }
+        catch (Exception) { Heimdall.Core.Logging.FileLogger.Warn("A deferred Shell stream cancellation callback failed."); }
     }
 }
