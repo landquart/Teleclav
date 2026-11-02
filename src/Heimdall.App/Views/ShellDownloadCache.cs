@@ -12,11 +12,13 @@ internal sealed class ShellDownloadCache : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly long _limit;
     private readonly TimeSpan _waitLimit;
+    private readonly ShellStagingGuard? _guard;
     private long _reserved;
     private int _readers;
     private int _downloads;
     private bool _disposed;
     private bool _cleaned;
+    private bool _retryScheduled;
     private Exception? _cleanupFailure;
 
     internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null)
@@ -28,6 +30,7 @@ internal sealed class ShellDownloadCache : IDisposable
         if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
             throw new ArgumentOutOfRangeException(nameof(waitLimit));
         DirectoryPath = ShellStagingDirectory.Create();
+        if (OperatingSystem.IsWindows()) { _guard = new ShellStagingGuard(DirectoryPath); }
     }
 
     internal string DirectoryPath { get; }
@@ -91,6 +94,8 @@ internal sealed class ShellDownloadCache : IDisposable
                 throw new IOException("The remote file changed size during the transfer.");
             }
 
+            if (OperatingSystem.IsWindows()) { _guard!.Record(Path.GetFileName(path)); }
+
             return path;
         }
         finally
@@ -107,7 +112,7 @@ internal sealed class ShellDownloadCache : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed) { return; }
+            if (_disposed) { CleanupIfFinished(); return; }
             _disposed = true;
         }
 
@@ -137,12 +142,37 @@ internal sealed class ShellDownloadCache : IDisposable
     private void CleanupIfFinished()
     {
         if (!_disposed || _downloads != 0 || _readers != 0 || _cleaned) { return; }
-        try { Directory.Delete(DirectoryPath, recursive: true); _cleaned = true; _cleanupFailure = null; }
+        try
+        {
+            if (OperatingSystem.IsWindows()) { _guard!.Delete(); }
+            else { Directory.Delete(DirectoryPath, recursive: true); }
+            _cleaned = true;
+            _cleanupFailure = null;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _cleanupFailure = ex;
             Heimdall.Core.Logging.FileLogger.Warn("Shell staging cleanup failed; temporary data may remain (" + ex.GetType().Name + ").");
+            if (OperatingSystem.IsWindows() && !_retryScheduled)
+            {
+                _retryScheduled = true;
+                _ = RetryCleanupAsync();
+            }
         }
+    }
+
+    private async Task RetryCleanupAsync()
+    {
+        foreach (int delay in new[] { 200, 500, 1500 })
+        {
+            await Task.Delay(delay).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (_cleaned) { break; }
+                CleanupIfFinished();
+            }
+        }
+        lock (_gate) { _retryScheduled = false; }
     }
 
     private sealed record Entry(long Size, Task<string> Download);

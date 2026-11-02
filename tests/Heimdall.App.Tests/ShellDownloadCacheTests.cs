@@ -35,6 +35,31 @@ public sealed class ShellDownloadCacheTests
     }
 
     [Fact]
+    public async Task Cleanup_RefusesReplacedCachedFile()
+    {
+        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        string directory = cache.DirectoryPath;
+        string original = Path.Combine(directory, "0");
+        string saved = directory + "-saved";
+        try
+        {
+            using (Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None)) { }
+            File.Move(original, saved);
+            File.WriteAllText(original, "do not delete");
+            cache.Dispose();
+            Assert.True(File.Exists(original));
+            Assert.NotNull(cache.CleanupFailure);
+        }
+        finally
+        {
+            if (File.Exists(original)) { File.Delete(original); }
+            if (File.Exists(saved)) { File.Move(saved, original); }
+            cache.Dispose();
+            if (File.Exists(saved)) { File.Delete(saved); }
+        }
+    }
+
+    [Fact]
     public async Task LockedStagingFile_CleanupFailureIsObservable()
     {
         var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
@@ -48,6 +73,9 @@ public sealed class ShellDownloadCacheTests
                 Assert.NotNull(cache.CleanupFailure);
                 Assert.True(Directory.Exists(directory));
             }
+            cache.Dispose();
+            Assert.Null(cache.CleanupFailure);
+            Assert.False(Directory.Exists(directory));
         }
         finally
         {
