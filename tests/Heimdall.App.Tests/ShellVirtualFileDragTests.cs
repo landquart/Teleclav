@@ -12,6 +12,35 @@ namespace Heimdall.App.Tests;
 public sealed class ShellVirtualFileDragTests
 {
     [Fact]
+    public async Task GetContents_ReturnsStreamBeforeRemoteDownloadCompletes()
+    {
+        IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, BrowserProxy>();
+        BrowserProxy proxy = (BrowserProxy)browser;
+        proxy.ProvideContent = true;
+        proxy.PauseDownload = true;
+        using ShellVirtualFileDrag drag = new(browser, FileEntry());
+        Task<STGMEDIUM> call = Task.Run(() =>
+        {
+            FORMATETC request = Format("FileContents", 0, TYMED.TYMED_ISTREAM);
+            drag.GetData(ref request, out STGMEDIUM result);
+            return result;
+        });
+        try
+        {
+            await proxy.DownloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Same(call, await Task.WhenAny(call, Task.Delay(TimeSpan.FromSeconds(2))));
+        }
+        finally
+        {
+            proxy.ContinueDownload.TrySetResult();
+            STGMEDIUM medium = await call.WaitAsync(TimeSpan.FromSeconds(20));
+            var stream = Assert.IsType<ShellReadStream>(Marshal.GetObjectForIUnknown(medium.unionmember));
+            Marshal.Release(medium.unionmember);
+            stream.Dispose();
+        }
+    }
+
+    [Fact]
     public void CancelledAsyncDrag_CleansUpAfterReturnWithoutEndOperation()
     {
         using ShellVirtualFileDrag drag = CreateDrag();
@@ -284,6 +313,9 @@ public sealed class ShellVirtualFileDragTests
     public class BrowserProxy : DispatchProxy
     {
         public bool ProvideContent { get; set; }
+        public bool PauseDownload { get; set; }
+        public TaskCompletionSource DownloadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ContinueDownload { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? LastPath { get; private set; }
         public string? LastRemotePath { get; private set; }
 
@@ -301,8 +333,14 @@ public sealed class ShellVirtualFileDragTests
                 return Task.FromException(new FileNotFoundException("remote file"));
             }
 
-            File.WriteAllText((string)args![1]!, "hello");
-            return Task.CompletedTask;
+            return WriteAsync((string)args![1]!);
+        }
+
+        private async Task WriteAsync(string path)
+        {
+            DownloadStarted.TrySetResult();
+            if (PauseDownload) { await ContinueDownload.Task; }
+            await File.WriteAllTextAsync(path, "hello");
         }
     }
 }
