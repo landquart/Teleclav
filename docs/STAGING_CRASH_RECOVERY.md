@@ -173,6 +173,21 @@ through the product scheduler and bounds inspection retries to sharing errors
 32/33 only. Content, protocol-state, foreign-data and subsequent-transfer assertions
 remain required; persistent refusal is still a test failure.
 
+CI 74 on `a35c257f` passed all 171 Debug staging/cache cases. The full Release
+suite reported 19,389 passed, one failed and one skipped; the only failure was
+DuringWrite fixture teardown reporting a sharing refusal on the journal. That
+finally exception could hide an earlier inspection error, so it is not evidence
+of successful recovery or proof of a specific earlier failure.
+
+The inspected premise was that waiting for a killed process made path access
+immediately available. There are three distinct actors: the terminated writer,
+the inspecting test and fixture teardown. Inspection now first acquires the
+validated exclusive journal lease, bounds sharing-only file-read retries, and
+releases that lease before the fresh scanner starts. Both assertion and teardown
+exceptions are preserved if they fail together. This changes the test's ownership
+handoff and diagnostics; production deletion authority and assertions are not
+relaxed. Final verification results are recorded in PR #12.
+
 Each external-termination case starts a fresh scanner process, checks the
 expected owned/retained objects, repeats recovery, and starts a fresh successful
 transfer. Tests also keep external sentinel data and check it before and after

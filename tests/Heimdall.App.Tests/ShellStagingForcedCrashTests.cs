@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -23,30 +24,34 @@ public sealed class ShellStagingForcedCrashTests
     public async Task ExternalTermination_RecoversEveryRegisteredBoundaryInANewProcess(string point)
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        using var area = new DeletionArea();
-        using var owner = new CrashChild(area.Root, "kill:" + point);
-        await owner.Ready();
-        Assert.Single(Directory.GetDirectories(area.Root));
-        await owner.Kill();
-        if (point == nameof(ShellStagingPoint.DuringWrite))
+        await VerifyWithArea(async area =>
         {
-            string operation = Assert.Single(Directory.GetDirectories(area.Root));
-            Assert.Equal("he", File.ReadAllText(Assert.Single(Directory.GetFiles(operation, "*.part"))));
-        }
-        if (point == "publish-intent")
-        {
-            string operation = Assert.Single(Directory.GetDirectories(area.Root));
-            using var inspection = await InspectAfterTermination(operation);
-            Assert.Equal(ShellStagingGuard.FileStage.Publishing, inspection.GetFileState("0")!.Stage);
-            Assert.Single(Directory.GetFiles(operation, "*.part"));
-            Assert.False(File.Exists(Path.Combine(operation, "0")));
-        }
-        await Scan(area.Root);
-        Assert.Empty(Directory.GetDirectories(area.Root));
-        await Scan(area.Root);
-        await Transfer(area.Root);
-        Assert.Empty(Directory.GetDirectories(area.Root));
-        area.AssertSentinel();
+            using var owner = new CrashChild(area.Root, "kill:" + point);
+            await owner.Ready();
+            Assert.Single(Directory.GetDirectories(area.Root));
+            await owner.Kill();
+            if (point is nameof(ShellStagingPoint.DuringWrite) or "publish-intent")
+            {
+                string operation = Assert.Single(Directory.GetDirectories(area.Root));
+                // Process termination is not the inspection lease. Acquire that lease before
+                // reading crash remnants; kernel/filter cleanup can transiently refuse access.
+                using var inspection = await RetrySharing(() => ShellStagingGuard.Reopen(operation));
+                string partial = Assert.Single(Directory.GetFiles(operation, "*.part"));
+                if (point == nameof(ShellStagingPoint.DuringWrite))
+                    Assert.Equal("he", await RetrySharing(() => File.ReadAllText(partial)));
+                else
+                {
+                    Assert.Equal(ShellStagingGuard.FileStage.Publishing, inspection.GetFileState("0")!.Stage);
+                    Assert.False(File.Exists(Path.Combine(operation, "0")));
+                }
+            }
+            await Scan(area.Root);
+            Assert.Empty(Directory.GetDirectories(area.Root));
+            await Scan(area.Root);
+            await Transfer(area.Root);
+            Assert.Empty(Directory.GetDirectories(area.Root));
+            area.AssertSentinel();
+        });
     }
 
     [Fact]
@@ -283,12 +288,27 @@ public sealed class ShellStagingForcedCrashTests
         await scanner.Succeed();
     }
 
-    private static async Task<ShellStagingGuard> InspectAfterTermination(string path)
+    private static async Task VerifyWithArea(Func<DeletionArea, Task> verify)
+    {
+        var area = new DeletionArea();
+        Exception? failure = null;
+        try { await verify(area); }
+        catch (Exception ex) { failure = ex; }
+        try { area.Dispose(); }
+        catch (Exception cleanup) when (failure is not null)
+        {
+            // C# using/finally otherwise replaces the original assertion with a teardown error.
+            throw new AggregateException("Crash verification and fixture teardown both failed.", failure, cleanup);
+        }
+        if (failure is not null) { ExceptionDispatchInfo.Capture(failure).Throw(); }
+    }
+
+    private static async Task<T> RetrySharing<T>(Func<T> open)
     {
         for (int attempt = 0; ; attempt++)
         {
-            try { return ShellStagingGuard.Reopen(path); }
-            catch (IOException ex) when (attempt < 2 && ex.InnerException is Win32Exception { NativeErrorCode: 32 or 33 })
+            try { return open(); }
+            catch (IOException ex) when (attempt < 2 && IsSharingRefusal(ex))
             {
                 // The product scheduler also retries sharing refusals. Keep the same identity
                 // assertions after acquiring a lease; do not turn a persistent refusal into a pass.
@@ -296,6 +316,10 @@ public sealed class ShellStagingForcedCrashTests
             }
         }
     }
+
+    private static bool IsSharingRefusal(IOException error)
+        => error.InnerException is Win32Exception { NativeErrorCode: 32 or 33 }
+            || error.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021);
 
     private static async Task Transfer(string root)
     {
