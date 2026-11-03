@@ -15,7 +15,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet restore tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --locked-mode
-      - run: dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-restore --filter "FullyQualifiedName~RepeatedOpen_RejectsReplacedCachedFile" --logger "trx;LogFileName=reopen.trx"
+      - run: dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-restore --filter "FullyQualifiedName~ShellDownloadCacheTests" --logger "trx;LogFileName=reopen.trx"
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
