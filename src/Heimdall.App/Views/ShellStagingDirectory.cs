@@ -25,7 +25,8 @@ internal static class ShellStagingDirectory
     [SupportedOSPlatform("windows")]
     internal static byte[] CreateSecurityDescriptor()
     {
-        SecurityIdentifier user = WindowsIdentity.GetCurrent().User
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        SecurityIdentifier user = identity.User
             ?? throw new InvalidOperationException("Cannot determine the current Windows user.");
         var security = new DirectorySecurity();
         security.SetOwner(user);
@@ -46,7 +47,8 @@ internal static class ShellStagingDirectory
     [SupportedOSPlatform("windows")]
     internal static byte[] CreateJournalSecurityDescriptor()
     {
-        SecurityIdentifier user = WindowsIdentity.GetCurrent().User
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        SecurityIdentifier user = identity.User
             ?? throw new InvalidOperationException("Cannot determine the current Windows user.");
         var security = new FileSecurity();
         security.SetOwner(user);

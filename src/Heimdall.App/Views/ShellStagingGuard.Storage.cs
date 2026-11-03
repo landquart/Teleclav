@@ -111,7 +111,8 @@ internal sealed partial class ShellStagingGuard
             byte[] data = new byte[GetSecurityDescriptorLength(descriptor)];
             Marshal.Copy(descriptor, data, 0, data.Length);
             var actual = new RawSecurityDescriptor(data, 0);
-            SecurityIdentifier user = WindowsIdentity.GetCurrent().User ?? throw new IOException("Missing Windows user.");
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            SecurityIdentifier user = identity.User ?? throw new IOException("Missing Windows user.");
             var trusted = new HashSet<SecurityIdentifier>
             {
                 user, new(WellKnownSidType.LocalSystemSid, null), new(WellKnownSidType.BuiltinAdministratorsSid, null),
