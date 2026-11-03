@@ -86,6 +86,33 @@ public sealed class ShellDownloadCacheTests
     }
 
     [Fact]
+    public async Task Cleanup_LeavesAllFilesWhenAnUnknownEntryIsPresent()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        string directory = cache.DirectoryPath;
+        string staged = Path.Combine(directory, "0");
+        string unknown = Path.Combine(directory, "unrecognized.txt");
+        try
+        {
+            using (Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None)) { }
+            File.WriteAllText(unknown, "keep");
+            cache.Dispose();
+            Assert.NotNull(cache.CleanupFailure);
+            Assert.Equal("keep", File.ReadAllText(unknown));
+            Assert.Equal("ok", File.ReadAllText(staged));
+            File.Delete(unknown);
+            cache.Dispose();
+            Assert.False(Directory.Exists(directory));
+        }
+        finally
+        {
+            if (File.Exists(unknown)) { File.Delete(unknown); }
+            cache.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task LockedStagingFile_CleanupFailureIsObservable()
     {
         var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
