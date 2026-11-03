@@ -66,7 +66,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
     }
 
     private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
-        (index, path, ct) => _browser.DownloadFileWithinLimitAsync(_files[index].FullPath, path, _files[index].Size, ct), _timeout);
+        (index, stream, ct) => _browser.DownloadToStreamWithinLimitAsync(_files[index].FullPath, stream, _files[index].Size, ct), _timeout);
 
     private static TimeSpan TransferTimeout()
     {

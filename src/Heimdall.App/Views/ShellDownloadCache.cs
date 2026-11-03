@@ -8,7 +8,7 @@ internal sealed class ShellDownloadCache : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<int, Entry> _entries = [];
-    private readonly Func<int, string, CancellationToken, Task> _download;
+    private readonly Func<int, Stream, CancellationToken, Task> _download;
     private readonly CancellationTokenSource _stop = new();
     private readonly long _limit;
     private readonly TimeSpan _waitLimit;
@@ -21,7 +21,7 @@ internal sealed class ShellDownloadCache : IDisposable
     private bool _retryScheduled;
     private Exception? _cleanupFailure;
 
-    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null,
+    internal ShellDownloadCache(long limit, Func<int, Stream, CancellationToken, Task> download, TimeSpan? waitLimit = null,
         Action<string>? created = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
@@ -104,11 +104,26 @@ internal sealed class ShellDownloadCache : IDisposable
     {
         try
         {
-            await _download(index, path, _stop.Token).ConfigureAwait(false);
-            if (OperatingSystem.IsWindows()) { _guard!.Record(Path.GetFileName(path)); }
-            if (new FileInfo(path).Length != expectedSize)
+            if (OperatingSystem.IsWindows())
             {
-                throw new IOException("The remote file changed size during the transfer.");
+                await _guard!.DownloadAsync(Path.GetFileName(path), expectedSize,
+                    (stream, ct) => _download(index, stream, ct), _stop.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                string partial = path + ".part";
+                try
+                {
+                    await using (FileStream file = new(partial, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        using var stream = new ShellStagingWriteStream(file, expectedSize, () => { });
+                        await _download(index, stream, _stop.Token).ConfigureAwait(false);
+                        if (file.Length != expectedSize) { throw new IOException("The downloaded file has an unexpected size."); }
+                        file.Flush(flushToDisk: true);
+                    }
+                    File.Move(partial, path, overwrite: false);
+                }
+                catch { File.Delete(partial); throw; }
             }
 
             return path;

@@ -396,26 +396,26 @@ public sealed class ShellVirtualFileDragTests
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadFileWithinLimitAsync))
+            if (targetMethod?.Name != nameof(IRemoteBrowser.DownloadToStreamWithinLimitAsync))
             {
                 throw new NotSupportedException();
             }
 
             LastRemotePath = (string)args![0]!;
-            LastPath = (string)args[1]!;
+            LastPath = Assert.IsType<ShellStagingWriteStream>(args[1]).FilePath;
             if (!ProvideContent)
             {
                 return Task.FromException(new FileNotFoundException("remote file"));
             }
 
-            return WriteAsync((string)args![1]!);
+            return WriteAsync((Stream)args![1]!);
         }
 
-        private async Task WriteAsync(string path)
+        private async Task WriteAsync(Stream path)
         {
             DownloadStarted.TrySetResult();
             if (PauseDownload) { await ContinueDownload.Task; }
-            await File.WriteAllTextAsync(path, "hello");
+            await path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("hello"), CancellationToken.None);
         }
     }
 }

@@ -35,7 +35,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public void Cleanup_RefusesReplacedStagingDirectory()
     {
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string original = cache.DirectoryPath;
         string moved = original + "-moved";
         string sentinel = Path.Combine(original, "unrelated.txt");
@@ -63,7 +63,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public async Task Cleanup_RefusesReplacedCachedFile()
     {
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string directory = cache.DirectoryPath;
         string original = Path.Combine(directory, "0");
         string saved = directory + "-saved";
@@ -89,7 +89,7 @@ public sealed class ShellDownloadCacheTests
     public async Task RepeatedOpen_RejectsReplacedCachedFile()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string original = Path.Combine(cache.DirectoryPath, "0");
         string saved = cache.DirectoryPath + "-saved";
         try
@@ -114,7 +114,7 @@ public sealed class ShellDownloadCacheTests
     public async Task Cleanup_LeavesAllFilesWhenAnUnknownEntryIsPresent()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string directory = cache.DirectoryPath;
         string staged = Path.Combine(directory, "0");
         string unknown = Path.Combine(directory, "unrecognized.txt");
@@ -140,7 +140,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public async Task LockedStagingFile_CleanupFailureIsObservable()
     {
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string directory = cache.DirectoryPath;
         try
         {
@@ -164,7 +164,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public async Task LockedStagingFile_IsRetriedAfterUnlock()
     {
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string directory = cache.DirectoryPath;
         try
         {
@@ -185,7 +185,7 @@ public sealed class ShellDownloadCacheTests
     public async Task LockedStagingFile_IsRetriedAfterLongerLock()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string directory = cache.DirectoryPath;
         try
         {
@@ -241,7 +241,7 @@ public sealed class ShellDownloadCacheTests
             downloadToken = ct;
             started.SetResult();
             await finish.Task;
-            await File.WriteAllTextAsync(path, "ok");
+            await path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), CancellationToken.None);
         }, TimeSpan.FromSeconds(2));
         string directory = cache.DirectoryPath;
         try
@@ -264,7 +264,7 @@ public sealed class ShellDownloadCacheTests
         {
             started.SetResult();
             await finish.Task;
-            await File.WriteAllTextAsync(path, "ok");
+            await path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), CancellationToken.None);
         });
         string directory = cache.DirectoryPath;
         Task<Stream> waiting = cache.OpenAsync(0, 2, CancellationToken.None);
@@ -281,7 +281,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public async Task AlreadyCancelledRequest_DoesNotStartDownload()
     {
-        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         using var stop = new CancellationTokenSource();
         stop.Cancel();
 
@@ -295,7 +295,7 @@ public sealed class ShellDownloadCacheTests
     {
         for (int i = 0; i < 100; i++)
         {
-            var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+            var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
             string directory = cache.DirectoryPath;
             using (Stream stream = await cache.OpenAsync(0, 2, CancellationToken.None))
             {
@@ -314,7 +314,7 @@ public sealed class ShellDownloadCacheTests
         {
             Interlocked.Increment(ref count);
             await Task.Delay(20, ct);
-            await File.WriteAllTextAsync(path, "hello", ct);
+            await path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("hello"), ct).AsTask();
         });
         string directory = cache.DirectoryPath;
         Task<Stream> first = cache.OpenAsync(0, 5, CancellationToken.None);
@@ -347,7 +347,7 @@ public sealed class ShellDownloadCacheTests
         {
             begun.SetResult();
             await finish.Task.WaitAsync(ct);
-            await File.WriteAllTextAsync(path, "ok", ct);
+            await path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask();
         });
         using var stop = new CancellationTokenSource();
         Task<Stream> cancelled = cache.OpenAsync(0, 2, stop.Token);
@@ -363,7 +363,7 @@ public sealed class ShellDownloadCacheTests
     [Fact]
     public async Task SizeMismatch_FailsAndCleansUp()
     {
-        var cache = new ShellDownloadCache(10, (_, path, ct) => File.WriteAllTextAsync(path, "toolong", ct));
+        var cache = new ShellDownloadCache(10, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("toolong"), ct).AsTask());
         string directory = cache.DirectoryPath;
         await Assert.ThrowsAsync<IOException>(() => cache.OpenAsync(0, 2, CancellationToken.None));
         cache.Dispose();

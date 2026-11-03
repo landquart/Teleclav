@@ -13,7 +13,7 @@ public sealed class ShellStagingOwnershipTests
         if (!OperatingSystem.IsWindows()) { return; }
         var cache = new ShellDownloadCache(2, async (_, path, ct) =>
         {
-            await File.WriteAllTextAsync(path + ".unregistered.part", "x", ct);
+            await path.WriteAsync("x"u8.ToArray(), ct);
             throw new IOException("Interrupted after partial creation.");
         });
         string directory = cache.DirectoryPath;
@@ -26,7 +26,6 @@ public sealed class ShellStagingOwnershipTests
         }
         finally
         {
-            File.Delete(Path.Combine(directory, "0.unregistered.part"));
             cache.Dispose();
         }
     }
@@ -35,7 +34,7 @@ public sealed class ShellStagingOwnershipTests
     public void Cache_EstablishesPersistentOwnershipBeforeDownloading()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Teleclav", "Staging"), Path.GetDirectoryName(cache.DirectoryPath));
         Assert.True(File.Exists(Path.Combine(cache.DirectoryPath, ".teleclav-owner")));
@@ -46,7 +45,7 @@ public sealed class ShellStagingOwnershipTests
 public sealed class ShellStagingOwnershipRecoveryTests
 {
     [Fact]
-    public void Reopen_RestoresRecordedFileIdentityAndCleansOnlyThatOperation()
+    public async Task Reopen_RestoresRecordedFileIdentityAndCleansOnlyThatOperation()
     {
         if (!OperatingSystem.IsWindows()) { return; }
         using var area = new OwnershipArea();
@@ -54,8 +53,7 @@ public sealed class ShellStagingOwnershipRecoveryTests
         using (var guard = ShellStagingGuard.CreateAt(area.Root))
         {
             path = guard.DirectoryPath;
-            File.WriteAllText(Path.Combine(path, "0"), "ok");
-            guard.Record("0");
+            await guard.DownloadAsync("0", 2, (stream, ct) => stream.WriteAsync("ok"u8.ToArray(), ct).AsTask(), CancellationToken.None);
         }
         using var reopened = ShellStagingGuard.Reopen(path);
         using (var file = File.OpenRead(Path.Combine(path, "0"))) { reopened.Verify("0", file.SafeFileHandle); }
@@ -221,15 +219,14 @@ public sealed class ShellStagingOwnershipRecoveryTests
     }
 
     [Fact]
-    public void Cleanup_DoesNotTouchAnotherOperation()
+    public async Task Cleanup_DoesNotTouchAnotherOperation()
     {
         if (!OperatingSystem.IsWindows()) { return; }
         using var area = new OwnershipArea();
         using var first = ShellStagingGuard.CreateAt(area.Root);
         using var second = ShellStagingGuard.CreateAt(area.Root);
         string sentinel = Path.Combine(second.DirectoryPath, "0");
-        File.WriteAllText(sentinel, "keep");
-        second.Record("0");
+        await second.DownloadAsync("0", 4, (stream, ct) => stream.WriteAsync("keep"u8.ToArray(), ct).AsTask(), CancellationToken.None);
         first.Delete();
         Assert.Equal("keep", File.ReadAllText(sentinel));
         second.Delete();

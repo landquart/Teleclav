@@ -676,27 +676,38 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
         string tempPath = AtomicLocalFile.CreateTempPath(localPath);
         bool staged = false;
+        try
+        {
+            await using (FileStream file = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                staged = true;
+                await DownloadToStreamWithinLimitAsync(remotePath, file, maximumBytes, ct).ConfigureAwait(false);
+                file.Flush(flushToDisk: true);
+            }
+            ct.ThrowIfCancellationRequested();
+            AtomicLocalFile.Commit(tempPath, localPath, overwrite: false);
+        }
+        catch
+        {
+            if (staged) { AtomicLocalFile.Rollback(tempPath); }
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
+        if (!destination.CanWrite) { throw new ArgumentException("The destination is not writable.", nameof(destination)); }
         await _clientLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             SftpClient client = GetConnectedClient();
-            try
-            {
-                await using (FileStream file = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
-                {
-                    staged = true;
-                    using LimitedWriteStream limit = new(file, maximumBytes);
-                    await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
-                        path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct), ct).ConfigureAwait(false);
-                }
-                ct.ThrowIfCancellationRequested();
-                AtomicLocalFile.Commit(tempPath, localPath, overwrite: false);
-            }
-            catch
-            {
-                if (staged) { AtomicLocalFile.Rollback(tempPath); }
-                throw;
-            }
+            using LimitedWriteStream limit = new(destination, maximumBytes);
+            await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
+                path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct), ct).ConfigureAwait(false);
         }
         finally { _clientLock.Release(); }
     }

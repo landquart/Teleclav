@@ -12,7 +12,7 @@ public sealed class ShellStagingDirectoryTests
     public async Task CacheCreatedDirectory_HasProtectedAclAndInheritedExecuteDenial()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        using var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        using var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         using Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None);
         var user = WindowsIdentity.GetCurrent().User!;
         var allowed = new HashSet<SecurityIdentifier>

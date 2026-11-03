@@ -45,26 +45,17 @@ internal sealed partial class ShellStagingGuard : IDisposable
         catch { Dispose(); throw; }
     }
 
-    internal void Record(string name)
-    {
-        ValidateFileName(name);
-        using SafeFileHandle file = Open(Path.Combine(_path, name), ReadAttributes);
-        FileIdentity identity = Identity(file);
-        if ((identity.Attributes & (DirectoryAttribute | ReparseAttribute)) != 0)
-            throw new IOException("A staging file is a directory or reparse point.");
-        lock (_gate)
-        {
-            if (_files.ContainsKey(name)) { throw new IOException("Staging file is already registered."); }
-            _journal!.AppendFile(name, identity);
-            _files.Add(name, identity);
-        }
-    }
-
     internal void Verify(string name, SafeFileHandle file)
     {
         FileIdentity actual = Identity(file);
         lock (_gate)
         {
+            if (_objects.TryGetValue(name, out OwnedFile? owned))
+            {
+                if (owned.Stage != FileStage.Published || owned.Identity != actual)
+                    throw new IOException("Staging file is not durably published or its identity changed.");
+                return;
+            }
             if (!_files.TryGetValue(name, out FileIdentity expected) || actual != expected)
                 throw new IOException("Staging file identity changed; reading refused.");
         }
@@ -72,16 +63,42 @@ internal sealed partial class ShellStagingGuard : IDisposable
 
     internal void Delete()
     {
+        lock (_gate) { DeleteOwnedFiles(); }
+    }
+
+    private void DeleteOwnedFiles()
+    {
         SafeFileHandle directory = _directory ?? throw new ObjectDisposedException(nameof(ShellStagingGuard));
         _journal?.MarkCleanup();
         string[] paths = Directory.GetFileSystemEntries(_path);
         var handles = new List<SafeFileHandle>();
+        var ownedHandles = new Dictionary<string, (SafeFileHandle Handle, OwnedFile Entry)>();
         try
         {
+            var candidates = new Dictionary<string, OwnedFile>(StringComparer.OrdinalIgnoreCase);
+            foreach (OwnedFile entry in _objects.Values.Where(e => e.Stage != FileStage.Deleted))
+            {
+                if (entry.Stage == FileStage.Publishing)
+                {
+                    candidates.Add(entry.Partial, entry);
+                    candidates.Add(entry.Target, entry);
+                }
+                else { candidates.Add(entry.Name, entry); }
+            }
             foreach (string path in paths)
             {
                 string name = Path.GetFileName(path);
                 if (_journal is not null && name == OwnershipName) { continue; }
+                if (candidates.TryGetValue(name, out OwnedFile? entry))
+                {
+                    SafeFileHandle owned = OpenRelative(directory, name, false, false, false,
+                        fileAccess: DeleteAccess | 8, exclusive: true);
+                    handles.Add(owned);
+                    FileIdentity identity = ValidateOwnedHandle(entry, owned);
+                    if (!ownedHandles.TryAdd(entry.Target, (owned, entry with { Identity = identity, FinalName = name == entry.Target })))
+                        throw new IOException("Multiple names claim the same staging object.");
+                    continue;
+                }
                 if (!_files.TryGetValue(name, out FileIdentity expected))
                     throw new IOException("Staging contains an unrecognized entry; cleanup refused.");
                 SafeFileHandle file = Open(path, DeleteAccess | ReadAttributes);
@@ -89,12 +106,23 @@ internal sealed partial class ShellStagingGuard : IDisposable
                 if (Identity(file) != expected)
                     throw new IOException("Staging file identity changed; cleanup refused.");
             }
+            // Validate every entry before authorizing any deletion. Missing files are also journalled idempotently.
+            foreach (OwnedFile entry in _objects.Values.ToArray())
+            {
+                if (entry.Stage == FileStage.Deleted) { continue; }
+                OwnedFile resolved = ownedHandles.TryGetValue(entry.Target, out var found) ? found.Entry : entry;
+                if (entry.Stage != FileStage.Deleting) { Save(resolved with { Stage = FileStage.Deleting }); }
+            }
+            Fault?.Invoke(ShellStagingPoint.AfterDeleteIntent);
             foreach (SafeFileHandle file in handles) { MarkDelete(file); }
         }
         finally
         {
             foreach (SafeFileHandle file in handles) { file.Dispose(); }
         }
+        Fault?.Invoke(ShellStagingPoint.AfterDelete);
+        foreach (OwnedFile entry in _objects.Values.Where(e => e.Stage == FileStage.Deleting).ToArray())
+            Save(entry with { Stage = FileStage.Deleted });
         _journal?.Delete();
         _journal = null;
         MarkDelete(directory);

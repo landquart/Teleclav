@@ -18,6 +18,7 @@ internal sealed partial class ShellStagingGuard
         private readonly FileStream _stream;
         private byte[] _previous = new byte[32];
         private bool _cleanup;
+        private int _version = 2;
         private bool _failed;
 
         private ShellStagingJournal(SafeFileHandle handle)
@@ -45,7 +46,7 @@ internal sealed partial class ShellStagingGuard
         }
 
         internal static ShellStagingJournal Open(SafeFileHandle directory, FileIdentity root, FileIdentity operation,
-            Guid id, Dictionary<string, FileIdentity> files)
+            Guid id, Dictionary<string, FileIdentity> files, Dictionary<string, OwnedFile> objects)
         {
             var journal = new ShellStagingJournal(OpenRelative(directory, OwnershipName, false, false, false, true));
             try
@@ -56,8 +57,21 @@ internal sealed partial class ShellStagingGuard
                 bool first = true;
                 while (journal._stream.Position < journal._stream.Length)
                 {
+                    long frameStart = journal._stream.Position;
+                    if (journal._stream.Length - frameStart < 4)
+                    {
+                        if (first) { throw new IOException("Truncated ownership header."); }
+                        journal.TrimTail(frameStart);
+                        break;
+                    }
                     int length = reader.ReadInt32();
                     if (length is < 1 or > 128) { throw new IOException("Invalid ownership record length."); }
+                    if (journal._stream.Length - journal._stream.Position < length + 32)
+                    {
+                        if (first) { throw new IOException("Truncated ownership header."); }
+                        journal.TrimTail(frameStart);
+                        break;
+                    }
                     byte[] payload = reader.ReadBytes(length);
                     byte[] hash = reader.ReadBytes(32);
                     if (payload.Length != length || hash.Length != 32
@@ -66,14 +80,15 @@ internal sealed partial class ShellStagingGuard
                     journal._previous = hash;
                     if (first)
                     {
-                        if (!payload.SequenceEqual(Header(root, operation, id)))
+                        if (payload.SequenceEqual(Header(root, operation, id, 1))) { journal._version = 1; }
+                        else if (!payload.SequenceEqual(Header(root, operation, id)))
                             throw new IOException("Ownership journal does not identify this directory.");
                         first = false;
                         continue;
                     }
                     using var record = new BinaryReader(new MemoryStream(payload), Encoding.UTF8);
                     byte kind = record.ReadByte();
-                    if (kind == 1 && !journal._cleanup)
+                    if (kind == 1 && journal._version == 1 && !journal._cleanup)
                     {
                         int count = record.ReadByte();
                         if (count is < 1 or > 10) { throw new IOException("Invalid ownership entry name length."); }
@@ -86,6 +101,16 @@ internal sealed partial class ShellStagingGuard
                             throw new IOException("Invalid ownership file identity.");
                         if (!files.TryAdd(name, identity)) { throw new IOException("Duplicate ownership entry."); }
                     }
+                    else if (kind == 3 && journal._version == 2)
+                    {
+                        OwnedFile entry = ReadObject(record);
+                        if (journal._cleanup && entry.Stage < FileStage.Deleting)
+                            throw new IOException("Creation record after cleanup began.");
+                        if (entry.Identity is { } identity && ((identity.Attributes & (DirectoryAttribute | ReparseAttribute)) != 0 || identity.Volume != root.Volume))
+                            throw new IOException("Invalid owned-file identity.");
+                        ValidateTransition(objects.GetValueOrDefault(entry.Target), entry);
+                        objects[entry.Target] = entry;
+                    }
                     else if (kind == 2 && !journal._cleanup) { journal._cleanup = true; }
                     else { throw new IOException("Invalid ownership state transition."); }
                     if (record.BaseStream.Position != record.BaseStream.Length) { throw new IOException("Invalid ownership record."); }
@@ -97,12 +122,12 @@ internal sealed partial class ShellStagingGuard
             catch { journal.Dispose(); throw; }
         }
 
-        private static byte[] Header(FileIdentity root, FileIdentity operation, Guid id)
+        private static byte[] Header(FileIdentity root, FileIdentity operation, Guid id, int version = 2)
         {
             using var buffer = new MemoryStream();
             using var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true);
             writer.Write("Teleclav staging");
-            writer.Write(1); // Format version. FILE_ID_INFO supplies a 64-bit volume serial and 128-bit file ID.
+            writer.Write(version); // Format version. FILE_ID_INFO supplies a 64-bit volume serial and 128-bit file ID.
             writer.Write((byte)0); // Active. Cleanup-pending is an append-only state transition.
             writer.Write(id.ToByteArray());
             WriteIdentity(writer, root);
@@ -110,15 +135,46 @@ internal sealed partial class ShellStagingGuard
             return buffer.ToArray();
         }
 
-        internal void AppendFile(string name, FileIdentity identity)
+        private void TrimTail(long length)
         {
-            if (_cleanup) { throw new IOException("Staging operation is closing."); }
+            _stream.SetLength(length);
+            _stream.Position = length;
+            _stream.Flush(flushToDisk: true);
+        }
+
+        private static OwnedFile ReadObject(BinaryReader reader)
+        {
+            int count = reader.ReadByte();
+            if (count is < 1 or > 10) { throw new IOException("Invalid owned-file target length."); }
+            byte[] name = reader.ReadBytes(count);
+            byte[] id = reader.ReadBytes(16);
+            if (name.Length != count || id.Length != 16) { throw new IOException("Truncated owned-file record."); }
+            string target = Encoding.ASCII.GetString(name);
+            long size = reader.ReadInt64();
+            FileStage stage = (FileStage)reader.ReadByte();
+            byte finalName = reader.ReadByte();
+            byte hasIdentity = reader.ReadByte();
+            if (finalName > 1 || hasIdentity > 1) { throw new IOException("Invalid owned-file flags."); }
+            FileIdentity? identity = hasIdentity == 1
+                ? new FileIdentity(reader.ReadUInt32(), reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadUInt64()) : null;
+            return new OwnedFile(target, new Guid(id), size, stage, identity, finalName == 1);
+        }
+
+        internal void AppendObject(OwnedFile entry)
+        {
+            if (_version != 2 || (_cleanup && entry.Stage < FileStage.Deleting))
+                throw new IOException("Staging operation cannot create files.");
             using var buffer = new MemoryStream();
             using (var writer = new BinaryWriter(buffer, Encoding.UTF8, leaveOpen: true))
             {
-                writer.Write((byte)1);
-                writer.Write(name);
-                WriteIdentity(writer, identity);
+                writer.Write((byte)3);
+                writer.Write(entry.Target);
+                writer.Write(entry.ObjectId.ToByteArray());
+                writer.Write(entry.Size);
+                writer.Write((byte)entry.Stage);
+                writer.Write((byte)(entry.FinalName ? 1 : 0));
+                writer.Write((byte)(entry.Identity is null ? 0 : 1));
+                if (entry.Identity is { } identity) { WriteIdentity(writer, identity); }
             }
             Append(buffer.ToArray());
         }

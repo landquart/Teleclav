@@ -35,7 +35,7 @@ public sealed class ShellStagingStressTests
 
     private static async Task OneTransfer()
     {
-        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        var cache = new ShellDownloadCache(2, (_, path, ct) => path.WriteAsync(System.Text.Encoding.UTF8.GetBytes("ok"), ct).AsTask());
         string path = cache.DirectoryPath;
         using (Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None)) { Assert.Equal('o', reader.ReadByte()); }
         cache.Dispose();
