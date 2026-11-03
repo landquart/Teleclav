@@ -59,6 +59,7 @@ internal sealed class ShellDownloadCache : IDisposable
                     throw new IOException("The temporary transfer space limit would be exceeded.");
                 }
 
+                if (OperatingSystem.IsWindows()) { _guard!.EnsureAvailableSpace(size); }
                 _reserved += size;
                 _downloads++;
                 string path = Path.Combine(DirectoryPath, index.ToString(System.Globalization.CultureInfo.InvariantCulture));

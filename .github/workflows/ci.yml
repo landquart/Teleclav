@@ -231,6 +231,16 @@ jobs:
       - name: Build (Debug, for format workspace)
         run: dotnet build Heimdall.slnx --no-restore
 
+      # Run the Windows filesystem security regressions before the release build/publish.
+      # Keep a separate TRX so ownership failures remain visible even if later lanes fail.
+      - name: Test Windows staging ownership
+        timeout-minutes: 5
+        run: >
+          dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-build --no-restore
+          --filter "FullyQualifiedName~ShellStaging|FullyQualifiedName~ShellDownloadCache"
+          --logger "trx;LogFileName=staging-ownership.trx"
+          --results-directory TestResults
+
       - name: Check code formatting
         run: dotnet format Heimdall.slnx --no-restore --verify-no-changes --verbosity diagnostic
 

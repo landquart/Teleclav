@@ -9,7 +9,7 @@ namespace Heimdall.App.Views;
 
 /// <summary>Pins the staging path and deletes only recorded files through verified Windows handles.</summary>
 [SupportedOSPlatform("windows")]
-internal sealed class ShellStagingGuard : IDisposable
+internal sealed partial class ShellStagingGuard : IDisposable
 {
     private const uint DeleteAccess = 0x00010000;
     private const uint ReadAttributes = 0x00000080;
@@ -28,48 +28,35 @@ internal sealed class ShellStagingGuard : IDisposable
     internal string DirectoryPath => _path;
 
     internal static ShellStagingGuard Create()
-        => new(Path.Combine(Path.GetTempPath(), "teleclav-drag-" + Guid.NewGuid().ToString("N")), create: true);
+        => CreateAt(DefaultRootPath);
 
-    internal ShellStagingGuard(string path) : this(path, create: false) { }
+    internal static ShellStagingGuard CreateAt(string root)
+        => new(Path.Combine(root, Guid.NewGuid().ToString("N")), reopen: false);
 
-    private ShellStagingGuard(string path, bool create)
+    private ShellStagingGuard(string path, bool reopen)
     {
         _path = Path.GetFullPath(path);
         try
         {
-            var parents = new Stack<string>();
-            DirectoryInfo? parent = Directory.GetParent(_path);
-            while (parent is not null) { parents.Push(parent.FullName); parent = parent.Parent; }
-            while (parents.TryPop(out string? item))
-            {
-                uint access = create && parents.Count == 0 ? ReadAttributes | 0x24u : ReadAttributes;
-                SafeFileHandle handle = Open(item, access);
-                _ancestors.Add(handle);
-                RequireDirectory(handle);
-            }
-            if (create)
-            {
-                string parentPath = Path.GetDirectoryName(_path) ?? throw new IOException("Missing staging parent.");
-                ShellStagingDirectory.EnsureVolumeSupportsAcl(parentPath);
-                _directory = CreateRelative(_ancestors[^1], Path.GetFileName(_path), ShellStagingDirectory.CreateSecurityDescriptor());
-            }
-            else { _directory = Open(_path, DeleteAccess | ReadAttributes); }
-            RequireDirectory(_directory);
+            if (reopen) { RestorePersistent(); }
+            else { InitializePersistent(); }
         }
-        catch
-        {
-            Dispose();
-            throw;
-        }
+        catch { Dispose(); throw; }
     }
 
     internal void Record(string name)
     {
+        ValidateFileName(name);
         using SafeFileHandle file = Open(Path.Combine(_path, name), ReadAttributes);
         FileIdentity identity = Identity(file);
         if ((identity.Attributes & (DirectoryAttribute | ReparseAttribute)) != 0)
             throw new IOException("A staging file is a directory or reparse point.");
-        lock (_gate) { _files.Add(name, identity); }
+        lock (_gate)
+        {
+            if (_files.ContainsKey(name)) { throw new IOException("Staging file is already registered."); }
+            _journal!.AppendFile(name, identity);
+            _files.Add(name, identity);
+        }
     }
 
     internal void Verify(string name, SafeFileHandle file)
@@ -85,6 +72,7 @@ internal sealed class ShellStagingGuard : IDisposable
     internal void Delete()
     {
         SafeFileHandle directory = _directory ?? throw new ObjectDisposedException(nameof(ShellStagingGuard));
+        _journal?.MarkCleanup();
         string[] paths = Directory.GetFileSystemEntries(_path);
         var handles = new List<SafeFileHandle>();
         try
@@ -92,6 +80,7 @@ internal sealed class ShellStagingGuard : IDisposable
             foreach (string path in paths)
             {
                 string name = Path.GetFileName(path);
+                if (_journal is not null && name == OwnershipName) { continue; }
                 if (!_files.TryGetValue(name, out FileIdentity expected))
                     throw new IOException("Staging contains an unrecognized entry; cleanup refused.");
                 SafeFileHandle file = Open(path, DeleteAccess | ReadAttributes);
@@ -105,12 +94,16 @@ internal sealed class ShellStagingGuard : IDisposable
         {
             foreach (SafeFileHandle file in handles) { file.Dispose(); }
         }
+        _journal?.Delete();
+        _journal = null;
         MarkDelete(directory);
         Dispose();
     }
 
     public void Dispose()
     {
+        _journal?.Dispose();
+        _journal = null;
         _directory?.Dispose();
         _directory = null;
         foreach (SafeFileHandle handle in _ancestors) { handle.Dispose(); }
@@ -141,7 +134,9 @@ internal sealed class ShellStagingGuard : IDisposable
     {
         if (!GetFileInformationByHandle(handle, out FileInformation value))
             throw new IOException("Unable to identify a staging object.", new Win32Exception(Marshal.GetLastWin32Error()));
-        return new FileIdentity(value.Attributes, value.VolumeSerialNumber, value.FileIndexHigh, value.FileIndexLow);
+        if (!GetFileInformationByHandleEx(handle, 18, out FileIdInformation id, (uint)Marshal.SizeOf<FileIdInformation>()))
+            throw new IOException("Unable to obtain a persistent staging identity.", new Win32Exception(Marshal.GetLastWin32Error()));
+        return new FileIdentity(value.Attributes, id.Volume, id.High, id.Low);
     }
 
     private static void MarkDelete(SafeFileHandle handle)
@@ -156,6 +151,18 @@ internal sealed class ShellStagingGuard : IDisposable
         IntPtr nameBuffer = Marshal.StringToHGlobalUni(name);
         IntPtr unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
         GCHandle security = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        bool added = false;
+        try
+        {
+            parent.DangerousAddRef(ref added);
+        }
+        catch
+        {
+            security.Free();
+            Marshal.FreeHGlobal(unicodePointer);
+            Marshal.FreeHGlobal(nameBuffer);
+            throw;
+        }
         try
         {
             var unicode = new UnicodeString
@@ -173,7 +180,7 @@ internal sealed class ShellStagingGuard : IDisposable
                 Attributes = 0x40,
                 SecurityDescriptor = security.AddrOfPinnedObject(),
             };
-            int status = NtCreateFile(out SafeFileHandle handle, DeleteAccess | ReadAttributes | 0x00100000,
+            int status = NtCreateFile(out SafeFileHandle handle, DeleteAccess | ReadAttributes | ReadControl | 0x00100027,
                 ref attributes, out _, IntPtr.Zero, DirectoryAttribute, ShareReadWrite, 2, 0x21, IntPtr.Zero, 0);
             if (status < 0)
             {
@@ -184,6 +191,7 @@ internal sealed class ShellStagingGuard : IDisposable
         }
         finally
         {
+            if (added) { parent.DangerousRelease(); }
             security.Free();
             Marshal.FreeHGlobal(unicodePointer);
             Marshal.FreeHGlobal(nameBuffer);
@@ -215,7 +223,15 @@ internal sealed class ShellStagingGuard : IDisposable
     [DllImport("ntdll.dll")]
     private static extern uint RtlNtStatusToDosError(int status);
 
-    private readonly record struct FileIdentity(uint Attributes, uint Volume, uint IndexHigh, uint IndexLow);
+    internal readonly record struct FileIdentity(uint Attributes, ulong Volume, ulong IndexHigh, ulong IndexLow);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileIdInformation { internal ulong Volume; internal ulong Low; internal ulong High; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int informationClass,
+        out FileIdInformation information, uint size);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileInformation

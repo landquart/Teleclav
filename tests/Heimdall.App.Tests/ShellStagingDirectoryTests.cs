@@ -32,12 +32,12 @@ public sealed class ShellStagingDirectoryTests
     public void Guard_PreventsRenamingAnAncestorUntilCleanup()
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        string parent = Directory.CreateTempSubdirectory("teleclav-guard-test-").FullName;
+        string parent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "teleclav-guard-test-" + Guid.NewGuid().ToString("N"));
         string moved = parent + "-moved";
-        string staging = Directory.CreateDirectory(Path.Combine(parent, "stage")).FullName;
         try
         {
-            using var guard = new ShellStagingGuard(staging);
+            using var guard = ShellStagingGuard.CreateAt(Path.Combine(parent, "Staging"));
             Assert.ThrowsAny<IOException>(() => Directory.Move(parent, moved));
             guard.Delete();
         }
