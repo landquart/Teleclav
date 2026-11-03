@@ -85,8 +85,17 @@ internal sealed class ShellDownloadCache : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             FileStream file = new(savedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
                 81920, FileOptions.SequentialScan);
-            _readers++;
-            return new Lease(file, ReleaseReader);
+            try
+            {
+                if (OperatingSystem.IsWindows()) { _guard!.Verify(Path.GetFileName(savedPath), file.SafeFileHandle); }
+                _readers++;
+                return new Lease(file, ReleaseReader);
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
+            }
         }
     }
 
