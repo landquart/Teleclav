@@ -8,6 +8,6 @@
     <IsTestProject>false</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../../src/Heimdall.App/Views/ShellStaging*.cs" Link="%(Filename)%(Extension)" />
+    <Compile Include="../../../src/Heimdall.App/Views/ShellStaging*.cs" Exclude="../../../src/Heimdall.App/Views/ShellStagingRecovery.cs" Link="%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

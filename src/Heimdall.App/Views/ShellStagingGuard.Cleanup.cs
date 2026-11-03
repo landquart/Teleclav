@@ -14,23 +14,26 @@ internal sealed partial class ShellStagingGuard
     private const int FileNamesInformation = 12;
     private const int NoMoreFiles = unchecked((int)0x80000006);
 
-    internal void Delete()
+    internal void Delete() => Delete(CancellationToken.None);
+
+    internal void Delete(CancellationToken cancellationToken)
     {
         lock (_gate)
         {
             if (_deleted) { return; } // Never resolve a reused pathname after successful teardown.
             ObjectDisposedException.ThrowIf(_disposeRequested || _directory is null, this);
             if (_writers != 0) { throw new IOException("Staging still has an active writer."); }
+            cancellationToken.ThrowIfCancellationRequested();
             ValidatePinnedChain();
             if (!_journalRemoved)
             {
                 _journal!.Validate();
                 _journal.MarkCleanup();
-                DeleteEntries();
+                DeleteEntries(cancellationToken);
                 Fault?.Invoke(ShellStagingPoint.BeforeJournalDelete);
                 ValidatePinnedChain();
                 _journal.Validate();
-                if (EnumerateNames().Any(name => name != OwnershipName))
+                if (EnumerateNames(cancellationToken).Any(name => name != OwnershipName))
                     throw new IOException("Staging is not empty; ownership journal retained.");
                 _journal.Delete();
                 _journal = null;
@@ -38,7 +41,7 @@ internal sealed partial class ShellStagingGuard
             }
             // If final directory disposition failed, retries use only this still-pinned identity and empty directory.
             // No unknown child can be removed using the in-memory teardown authorization.
-            if (EnumerateNames().Count != 0) { throw new IOException("Staging directory is not empty."); }
+            if (EnumerateNames(cancellationToken).Count != 0) { throw new IOException("Staging directory is not empty."); }
             MarkDelete(_directory!);
             _deleted = true;
             Dispose();
@@ -59,20 +62,22 @@ internal sealed partial class ShellStagingGuard
 
     private sealed record DeleteEntry(string Name, SafeFileHandle Handle, OwnedFile? File);
 
-    private void DeleteEntries()
+    private void DeleteEntries(CancellationToken cancellationToken)
     {
-        List<DeleteEntry> entries = OpenDeletionSet();
+        List<DeleteEntry> entries = OpenDeletionSet(cancellationToken);
         try
         {
             var resolvedFiles = entries.Where(e => e.File is not null).ToDictionary(e => e.File!.Target, e => e.File!, StringComparer.Ordinal);
             foreach (OwnedFile file in _objects.Values.Where(e => e.Stage != FileStage.Deleted).ToArray())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 OwnedFile resolved = resolvedFiles.GetValueOrDefault(file.Target) ?? file;
                 if (file.Stage != FileStage.Deleting) { Save(resolved with { Stage = FileStage.Deleting }); }
             }
             Fault?.Invoke(ShellStagingPoint.AfterDeleteIntent);
             foreach (DeleteEntry entry in entries)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (entry.File is { } owned) { ValidateOwnedHandle(owned, entry.Handle); }
                 else { ValidateLegacy(entry.Name, entry.Handle); }
                 MarkDelete(entry.Handle);
@@ -87,7 +92,7 @@ internal sealed partial class ShellStagingGuard
         finally { foreach (DeleteEntry entry in entries) { entry.Handle.Dispose(); } }
     }
 
-    private List<DeleteEntry> OpenDeletionSet()
+    private List<DeleteEntry> OpenDeletionSet(CancellationToken cancellationToken)
     {
         var candidates = new Dictionary<string, OwnedFile>(StringComparer.Ordinal);
         foreach (OwnedFile entry in _objects.Values.Where(e => e.Stage != FileStage.Deleted))
@@ -103,8 +108,9 @@ internal sealed partial class ShellStagingGuard
         var seen = new HashSet<string>(StringComparer.Ordinal);
         try
         {
-            foreach (string name in EnumerateNames().Order(StringComparer.Ordinal))
+            foreach (string name in EnumerateNames(cancellationToken).Order(StringComparer.Ordinal))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (name == OwnershipName) { continue; }
                 if (!candidates.ContainsKey(name) && !_files.ContainsKey(name))
                     throw new IOException("Staging contains an unrecognized entry; cleanup refused.");
@@ -134,18 +140,21 @@ internal sealed partial class ShellStagingGuard
         RequireTrustedAcl(handle, false);
     }
 
-    private List<string> EnumerateNames()
+    private List<string> EnumerateNames(CancellationToken cancellationToken)
+        => EnumerateNames(_directory!, cancellationToken).ToList();
+
+    private static IEnumerable<string> EnumerateNames(SafeFileHandle directory, CancellationToken cancellationToken)
     {
-        var names = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         byte[] buffer = new byte[4096];
         bool restart = true;
         while (true)
         {
-            int status = NtQueryDirectoryFile(_directory!, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out IoStatusBlock io,
+            cancellationToken.ThrowIfCancellationRequested();
+            int status = NtQueryDirectoryFile(directory, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out IoStatusBlock io,
                 buffer, (uint)buffer.Length, FileNamesInformation, true, IntPtr.Zero, restart);
             restart = false;
-            if (status == NoMoreFiles) { return names; }
+            if (status == NoMoreFiles) { yield break; }
             if (status != 0) { throw new IOException("Cannot enumerate pinned staging directory.", new Win32Exception((int)RtlNtStatusToDosError(status))); }
             ulong bytes = io.Information.ToUInt64();
             if (bytes < 12 || bytes > (ulong)buffer.Length || BinaryPrimitives.ReadUInt32LittleEndian(buffer) != 0)
@@ -158,9 +167,9 @@ internal sealed partial class ShellStagingGuard
             catch (DecoderFallbackException ex) { throw new IOException("Invalid native directory name.", ex); }
             if (name is "." or "..") { continue; }
             ValidateComponent(name);
-            if (names.Count == 65536 || !seen.Add(name))
+            if (seen.Count == 65536 || !seen.Add(name))
                 throw new IOException("Invalid or excessive directory entries.");
-            names.Add(name);
+            yield return name;
         }
     }
 

@@ -3,6 +3,11 @@ using System.IO;
 using Heimdall.App.Views;
 
 if (!OperatingSystem.IsWindows()) { return 2; }
+if (args[1] == "scan")
+{
+    ShellStagingGuard.RecoverAbandoned(args[0], 128, CancellationToken.None);
+    return 0;
+}
 if (args[1] == "recover")
 {
     try { using var recovered = ShellStagingGuard.Reopen(args[0]); recovered.Delete(); return 0; }

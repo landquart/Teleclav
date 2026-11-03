@@ -171,6 +171,7 @@ public partial class App : System.Windows.Application
     /// a shell reads it, and -1 showed there as 4294967295.
     /// </summary>
     private const int StartupFailureExitCode = 1;
+    private readonly CancellationTokenSource _stagingRecoveryCancellation = new();
 
     // WPF's startup hook is event-like. Keeping async void here lets the splash
     // stay visible while awaited initialization completes on the dispatcher.
@@ -253,6 +254,9 @@ public partial class App : System.Windows.Application
 
         // After the single-instance decision, deliberately: a second launch used to
         // flash the full splash before handing over to the running instance.
+        // Independent data profiles still share Shell staging. Its journal leases, rather than
+        // the settings single-instance guard, exclude live owners. Recovery never blocks the UI.
+        _ = Views.ShellStagingRecovery.RunStartupAsync(_stagingRecoveryCancellation.Token);
         var splash = CreateSplashWindow();
 
         LogMsTscAxRegistration();
@@ -1731,6 +1735,8 @@ public partial class App : System.Windows.Application
 
         _singleInstanceGuard?.Dispose();
         _singleInstanceGuard = null;
+        _stagingRecoveryCancellation.Cancel();
+        _stagingRecoveryCancellation.Dispose();
 
         // Started before the tail, waited for at its end: a trust change made in the last
         // quiet window would otherwise be lost with the process.

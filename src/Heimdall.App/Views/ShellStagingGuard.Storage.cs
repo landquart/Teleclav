@@ -34,8 +34,7 @@ internal sealed partial class ShellStagingGuard
             Guid.ParseExact(Path.GetFileName(_path), "N"));
     }
 
-    // Reopening validates ownership and loads recorded identities, but never performs recovery or deletion.
-    // F3.4 must acquire this exclusive journal lease before inspecting an abandoned operation.
+    // Reopening acquires the exclusive journal lease and validates persisted ownership before cleanup.
     internal static ShellStagingGuard Reopen(string path) => new(path, reopen: true);
 
     private void RestorePersistent()
@@ -43,13 +42,13 @@ internal sealed partial class ShellStagingGuard
         string root = Path.GetDirectoryName(_path) ?? throw new IOException("Missing staging root.");
         if (!Guid.TryParseExact(Path.GetFileName(_path), "N", out Guid operation))
             throw new IOException("Invalid staging operation name.");
-        OpenTrustedRoot(root);
+        OpenTrustedRoot(root, create: false);
         _directory = OpenRelative(_ancestors[^1], Path.GetFileName(_path), false, false, true, deleteDirectory: true);
         RequirePrivateDirectory(_directory);
         _journal = ShellStagingJournal.Open(_directory, Identity(_ancestors[^1]), Identity(_directory), operation, _files, _objects);
     }
 
-    private void OpenTrustedRoot(string path)
+    private void OpenTrustedRoot(string path, bool create = true)
     {
         string full = Path.GetFullPath(path);
         string drive = Path.GetPathRoot(full) ?? throw new IOException("Missing staging volume.");
@@ -68,7 +67,7 @@ internal sealed partial class ShellStagingGuard
         {
             bool privateDirectory = i >= parts.Length - 2;
             // Existing profile ancestors are opened only. Only the two application components may be created.
-            current = OpenRelative(current, parts[i], privateDirectory, privateDirectory, true);
+            current = OpenRelative(current, parts[i], privateDirectory && create, privateDirectory, true);
             _ancestors.Add(current);
             RequireDirectory(current);
             RequireTrustedAcl(current, privateDirectory);
