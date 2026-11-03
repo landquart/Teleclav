@@ -117,6 +117,8 @@ public sealed class ShellStagingDeletionSecurityTests
         Directory.Move(path, saved);
         var security = new DirectoryInfo(saved).GetAccessControl();
         Directory.CreateDirectory(path);
+        security.SetSecurityDescriptorBinaryForm(security.GetSecurityDescriptorBinaryForm(),
+            AccessControlSections.Access | AccessControlSections.Owner);
         new DirectoryInfo(path).SetAccessControl(security);
         File.Copy(Path.Combine(saved, ShellStagingGuard.OwnershipName), Path.Combine(path, ShellStagingGuard.OwnershipName));
         File.WriteAllText(Path.Combine(path, "foreign"), "foreign");
