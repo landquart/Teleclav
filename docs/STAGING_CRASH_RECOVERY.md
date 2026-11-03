@@ -188,6 +188,18 @@ exceptions are preserved if they fail together. This changes the test's ownershi
 handoff and diagnostics; production deletion authority and assertions are not
 relaxed. Final verification results are recorded in PR #12.
 
+CI 75 on `e865c556` again passed 171 Debug cases, and DuringWrite passed in the
+full Release suite. Three damaged-operation fixture cases failed before their
+expected multi-pass scan completed, with teardown sharing errors masking setup
+errors. These cases had still mutated files/directories immediately after the
+process wait. Their setup now reacquires the validated journal lease and an
+exclusive data-file handle, verifies the published identity and original contents,
+then closes those handles before injecting corruption/substitution. The partial
+inspection likewise reads through its exclusive data handle. Both fixture families
+preserve simultaneous body/teardown failures. Tests intentionally retaining an
+independent external reader do not use this exclusive-rundown setup, since that
+reader must remain protected and block recovery until released.
+
 Each external-termination case starts a fresh scanner process, checks the
 expected owned/retained objects, repeats recovery, and starts a fresh successful
 transfer. Tests also keep external sentinel data and check it before and after

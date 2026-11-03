@@ -37,11 +37,16 @@ public sealed class ShellStagingForcedCrashTests
                 // reading crash remnants; kernel/filter cleanup can transiently refuse access.
                 using var inspection = await RetrySharing(() => ShellStagingGuard.Reopen(operation));
                 string partial = Assert.Single(Directory.GetFiles(operation, "*.part"));
+                using var data = await RetrySharing(() => File.Open(partial, FileMode.Open, FileAccess.Read, FileShare.None));
                 if (point == nameof(ShellStagingPoint.DuringWrite))
-                    Assert.Equal("he", await RetrySharing(() => File.ReadAllText(partial)));
+                {
+                    using var reader = new StreamReader(data);
+                    Assert.Equal("he", reader.ReadToEnd());
+                }
                 else
                 {
                     Assert.Equal(ShellStagingGuard.FileStage.Publishing, inspection.GetFileState("0")!.Stage);
+                    Assert.Equal(5, data.Length);
                     Assert.False(File.Exists(Path.Combine(operation, "0")));
                 }
             }
@@ -161,89 +166,92 @@ public sealed class ShellStagingForcedCrashTests
     public async Task FreshScanner_HandlesDamagedOperationsWithoutBlockingValidPeers(string damage, bool removed)
     {
         if (!OperatingSystem.IsWindows()) { return; }
-        using var area = new DeletionArea();
-        using var owner = new CrashChild(area.Root, "kill:reader-open");
-        await owner.Ready();
-        string path = Assert.Single(Directory.GetDirectories(area.Root));
-        await owner.Kill();
-        string journal = Path.Combine(path, ShellStagingGuard.OwnershipName);
-        string file = Path.Combine(path, "0");
-        FileSecurity? permissions = null;
-        switch (damage)
+        await VerifyWithArea(async area =>
         {
-            case "truncated-header": File.WriteAllBytes(journal, [1, 2, 3]); break;
-            case "unsupported-version": ChangeHeader(journal, changeVersion: true); break;
-            case "operation-id": ChangeHeader(journal, changeVersion: false); break;
-            case "corrupt-record":
-                byte[] bytes = File.ReadAllBytes(journal);
-                bytes[^1] ^= 1;
-                File.WriteAllBytes(journal, bytes);
-                break;
-            case "missing-journal": File.Delete(journal); break;
-            case "unknown-object": File.WriteAllText(Path.Combine(path, "foreign"), "foreign"); break;
-            case "replaced-file":
-                File.Move(file, Path.Combine(area.Controls, "original"));
-                File.WriteAllText(file, "foreign");
-                break;
-            case "operation-link":
-            case "operation-junction":
-                Directory.Move(path, Path.Combine(area.Controls, "original-operation"));
-                if (damage == "operation-link") { Directory.CreateSymbolicLink(path, area.Controls); }
-                else
-                {
-                    var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
-                    { UseShellExecute = false, CreateNoWindow = true };
-                    start.ArgumentList.Add("/c"); start.ArgumentList.Add("mklink"); start.ArgumentList.Add("/J");
-                    start.ArgumentList.Add(path); start.ArgumentList.Add(area.Controls);
-                    using Process link = Process.Start(start)!;
-                    await link.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-                    Assert.Equal(0, link.ExitCode);
-                }
-                break;
-            case "denied-access":
-                var info = new FileInfo(journal);
-                permissions = info.GetAccessControl();
-                FileSecurity denied = info.GetAccessControl();
-                using (WindowsIdentity user = WindowsIdentity.GetCurrent())
-                    denied.AddAccessRule(new FileSystemAccessRule(user.User!, FileSystemRights.ReadData, AccessControlType.Deny));
-                info.SetAccessControl(denied);
-                break;
-            case "missing-file": File.Delete(file); break;
-            case "torn-tail":
-                using (var stream = new FileStream(journal, FileMode.Open, FileAccess.Write))
-                {
-                    stream.SetLength(stream.Length - 1);
-                    stream.Flush(flushToDisk: true);
-                }
-                break;
-        }
-        string valid;
-        using (var peer = ShellStagingGuard.CreateAt(area.Root))
-        {
-            valid = peer.DirectoryPath;
-            await ShellStagingDeletionTests.Write(peer);
-        }
-        try
-        {
-            await Scan(area.Root);
-            Assert.Equal(!removed, Directory.Exists(path));
-            Assert.False(Directory.Exists(valid));
-            if (!removed && damage is not ("operation-link" or "operation-junction"))
-                Assert.Equal(damage == "replaced-file" ? "foreign" : "hello", File.ReadAllText(file));
-            if (damage == "unknown-object") { Assert.Equal("foreign", File.ReadAllText(Path.Combine(path, "foreign"))); }
-            await Scan(area.Root);
-            await Transfer(area.Root);
-            Assert.Equal(!removed, Directory.Exists(path));
-            area.AssertSentinel();
-        }
-        finally
-        {
-            if (permissions is not null)
+            using var owner = new CrashChild(area.Root, "kill:reader-open");
+            await owner.Ready();
+            string path = Assert.Single(Directory.GetDirectories(area.Root));
+            await owner.Kill();
+            await AwaitPublishedRundown(path);
+            string journal = Path.Combine(path, ShellStagingGuard.OwnershipName);
+            string file = Path.Combine(path, "0");
+            FileSecurity? permissions = null;
+            switch (damage)
             {
-                permissions.SetSecurityDescriptorBinaryForm(permissions.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
-                new FileInfo(journal).SetAccessControl(permissions);
+                case "truncated-header": File.WriteAllBytes(journal, [1, 2, 3]); break;
+                case "unsupported-version": ChangeHeader(journal, changeVersion: true); break;
+                case "operation-id": ChangeHeader(journal, changeVersion: false); break;
+                case "corrupt-record":
+                    byte[] bytes = File.ReadAllBytes(journal);
+                    bytes[^1] ^= 1;
+                    File.WriteAllBytes(journal, bytes);
+                    break;
+                case "missing-journal": File.Delete(journal); break;
+                case "unknown-object": File.WriteAllText(Path.Combine(path, "foreign"), "foreign"); break;
+                case "replaced-file":
+                    File.Move(file, Path.Combine(area.Controls, "original"));
+                    File.WriteAllText(file, "foreign");
+                    break;
+                case "operation-link":
+                case "operation-junction":
+                    Directory.Move(path, Path.Combine(area.Controls, "original-operation"));
+                    if (damage == "operation-link") { Directory.CreateSymbolicLink(path, area.Controls); }
+                    else
+                    {
+                        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"))
+                        { UseShellExecute = false, CreateNoWindow = true };
+                        start.ArgumentList.Add("/c"); start.ArgumentList.Add("mklink"); start.ArgumentList.Add("/J");
+                        start.ArgumentList.Add(path); start.ArgumentList.Add(area.Controls);
+                        using Process link = Process.Start(start)!;
+                        await link.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                        Assert.Equal(0, link.ExitCode);
+                    }
+                    break;
+                case "denied-access":
+                    var info = new FileInfo(journal);
+                    permissions = info.GetAccessControl();
+                    FileSecurity denied = info.GetAccessControl();
+                    using (WindowsIdentity user = WindowsIdentity.GetCurrent())
+                        denied.AddAccessRule(new FileSystemAccessRule(user.User!, FileSystemRights.ReadData, AccessControlType.Deny));
+                    info.SetAccessControl(denied);
+                    break;
+                case "missing-file": File.Delete(file); break;
+                case "torn-tail":
+                    using (var stream = new FileStream(journal, FileMode.Open, FileAccess.Write))
+                    {
+                        stream.SetLength(stream.Length - 1);
+                        stream.Flush(flushToDisk: true);
+                    }
+                    break;
             }
-        }
+            string valid;
+            using (var peer = ShellStagingGuard.CreateAt(area.Root))
+            {
+                valid = peer.DirectoryPath;
+                await ShellStagingDeletionTests.Write(peer);
+            }
+            try
+            {
+                await Scan(area.Root);
+                Assert.Equal(!removed, Directory.Exists(path));
+                Assert.False(Directory.Exists(valid));
+                if (!removed && damage is not ("operation-link" or "operation-junction"))
+                    Assert.Equal(damage == "replaced-file" ? "foreign" : "hello", File.ReadAllText(file));
+                if (damage == "unknown-object") { Assert.Equal("foreign", File.ReadAllText(Path.Combine(path, "foreign"))); }
+                await Scan(area.Root);
+                await Transfer(area.Root);
+                Assert.Equal(!removed, Directory.Exists(path));
+                area.AssertSentinel();
+            }
+            finally
+            {
+                if (permissions is not null)
+                {
+                    permissions.SetSecurityDescriptorBinaryForm(permissions.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+                    new FileInfo(journal).SetAccessControl(permissions);
+                }
+            }
+        });
     }
 
     private static void ChangeHeader(string path, bool changeVersion)
@@ -301,6 +309,17 @@ public sealed class ShellStagingForcedCrashTests
             throw new AggregateException("Crash verification and fixture teardown both failed.", failure, cleanup);
         }
         if (failure is not null) { ExceptionDispatchInfo.Capture(failure).Throw(); }
+    }
+
+    private static async Task AwaitPublishedRundown(string path)
+    {
+        // These tests mutate a formerly live operation. Fence both the owner's journal and
+        // its data handle before doing so; a process wait alone is not a file-access lease.
+        using var owner = await RetrySharing(() => ShellStagingGuard.Reopen(path));
+        using var data = await RetrySharing(() => File.Open(Path.Combine(path, "0"), FileMode.Open, FileAccess.Read, FileShare.None));
+        owner.Verify("0", data.SafeFileHandle);
+        using var reader = new StreamReader(data);
+        Assert.Equal("hello", reader.ReadToEnd());
     }
 
     private static async Task<T> RetrySharing<T>(Func<T> open)
