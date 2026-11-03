@@ -30,8 +30,10 @@ internal sealed partial class ShellStagingGuard
         OpenTrustedRoot(root);
         _directory = CreateRelative(_ancestors[^1], Path.GetFileName(_path), ShellStagingDirectory.CreateSecurityDescriptor());
         RequirePrivateDirectory(_directory);
+        Fault?.Invoke(ShellStagingPoint.AfterOperationDirectory);
         _journal = ShellStagingJournal.Create(_directory, Identity(_ancestors[^1]), Identity(_directory),
             Guid.ParseExact(Path.GetFileName(_path), "N"));
+        Fault?.Invoke(ShellStagingPoint.AfterOwnershipJournal);
     }
 
     // Reopening acquires the exclusive journal lease and validates persisted ownership before cleanup.

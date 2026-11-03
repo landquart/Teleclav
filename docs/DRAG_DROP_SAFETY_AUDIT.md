@@ -185,6 +185,10 @@ All new security tests have control files outside staging and verify unchanged c
 
 ## F3.4: bounded startup discovery and safe abandonment
 
+See [STAGING_CRASH_RECOVERY.md](STAGING_CRASH_RECOVERY.md) for the ownership and
+lease model, state-by-state recovery policy, external process-termination tests,
+bounded retries and manual handling of pre-journal temporary directories.
+
 This section supersedes earlier statements that startup discovery is absent. After the normal single-instance decision, product startup schedules recovery off the dispatcher. Independent settings profiles still share per-user Shell staging; only the exclusive ownership-journal lease authorizes abandonment of an operation. Privilege-helper and suppressed test lifecycles do not run product recovery. Application exit cancels future recovery work without waiting on or force-closing another owner's streams.
 
 Discovery opens only an existing root. It never creates missing application directories, repairs permissions, follows a root/operation reparse point or recursively removes an unrecognized tree. The same fixed-NTFS, protected-ACL and ancestor-handle checks used by creation apply. Root enumeration uses `NtQueryDirectoryFile` against its pinned handle. A bounded name snapshot is taken before deleting anything, avoiding mutation of our own enumeration cursor. The root/ancestor handles remain pinned without delete sharing throughout the pass. Each candidate is reopened through the verified component chain, its root identity is compared with the discovery owner, and the exclusive journal/header/operation identity is validated before the F3.3 deletion protocol runs. A GUID-shaped name is only a candidate, never proof of ownership. No age/PID inference is used.

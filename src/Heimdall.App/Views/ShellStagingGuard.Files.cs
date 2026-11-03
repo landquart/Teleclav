@@ -12,6 +12,7 @@ internal enum ShellStagingPoint
 {
     BeforeIntent, AfterIntent, BeforeCreate, AfterCreate, AfterIdentity, DuringWrite,
     AfterWrite, BeforePublish, AfterPublish, BeforeComplete, AfterDeleteIntent, AfterDelete, AfterFileDelete, BeforeJournalDelete,
+    AfterOperationDirectory, AfterOwnershipJournal,
 }
 
 internal sealed partial class ShellStagingGuard

@@ -11,7 +11,8 @@ public sealed class ShellStagingProtocolTests
 {
     public static IEnumerable<object[]> CreationPoints => Enum.GetValues<ShellStagingPoint>()
         .Where(p => p <= ShellStagingPoint.BeforeComplete).Select(p => new object[] { (int)p });
-    public static IEnumerable<object[]> CrashPoints => Enum.GetValues<ShellStagingPoint>().Select(p => new object[] { (int)p });
+    public static IEnumerable<object[]> CrashPoints => Enum.GetValues<ShellStagingPoint>()
+        .Where(p => p <= ShellStagingPoint.BeforeJournalDelete).Select(p => new object[] { (int)p });
 
     [Theory]
     [MemberData(nameof(CreationPoints))]

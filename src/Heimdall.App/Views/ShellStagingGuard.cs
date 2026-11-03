@@ -30,14 +30,15 @@ internal sealed partial class ShellStagingGuard : IDisposable
     internal static ShellStagingGuard Create()
         => CreateAt(DefaultRootPath);
 
-    internal static ShellStagingGuard CreateAt(string root)
-        => new(Path.Combine(root, Guid.NewGuid().ToString("N")), reopen: false);
+    internal static ShellStagingGuard CreateAt(string root, Action<ShellStagingPoint>? fault = null)
+        => new(Path.Combine(root, Guid.NewGuid().ToString("N")), reopen: false, fault);
 
-    private ShellStagingGuard(string path, bool reopen)
+    private ShellStagingGuard(string path, bool reopen, Action<ShellStagingPoint>? fault = null)
     {
         ValidateInteropLayout();
         ValidatePath(path);
         _path = Path.GetFullPath(path);
+        Fault = fault;
         try
         {
             if (reopen) { RestorePersistent(); }
