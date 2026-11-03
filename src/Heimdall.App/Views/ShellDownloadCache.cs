@@ -168,7 +168,7 @@ internal sealed class ShellDownloadCache : IDisposable
 
     private async Task RetryCleanupAsync()
     {
-        foreach (int delay in new[] { 200, 500, 1500 })
+        foreach (int delay in new[] { 200, 500, 1500, 3000, 5000, 10000, 10000 })
         {
             await Task.Delay(delay).ConfigureAwait(false);
             lock (_gate)
