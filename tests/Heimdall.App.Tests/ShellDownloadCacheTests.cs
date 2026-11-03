@@ -86,6 +86,31 @@ public sealed class ShellDownloadCacheTests
     }
 
     [Fact]
+    public async Task RepeatedOpen_RejectsReplacedCachedFile()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        var cache = new ShellDownloadCache(2, (_, path, ct) => File.WriteAllTextAsync(path, "ok", ct));
+        string original = Path.Combine(cache.DirectoryPath, "0");
+        string saved = cache.DirectoryPath + "-saved";
+        try
+        {
+            using (Stream reader = await cache.OpenAsync(0, 2, CancellationToken.None)) { }
+            File.Move(original, saved);
+            File.WriteAllText(original, "no");
+            await Assert.ThrowsAsync<IOException>(() => cache.OpenAsync(0, 2, CancellationToken.None));
+        }
+        finally
+        {
+            if (File.Exists(saved))
+            {
+                if (File.Exists(original)) { File.Delete(original); }
+                File.Move(saved, original);
+            }
+            cache.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Cleanup_LeavesAllFilesWhenAnUnknownEntryIsPresent()
     {
         if (!OperatingSystem.IsWindows()) { return; }
