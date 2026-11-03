@@ -73,6 +73,53 @@ public sealed class ShellStagingDeletionTests
 
     internal static Task Write(ShellStagingGuard guard, string name = "0") => guard.DownloadAsync(name, 5,
         (stream, ct) => stream.WriteAsync("hello"u8.ToArray(), ct).AsTask(), CancellationToken.None);
+
+    [Fact]
+    public async Task DisposeDuringWrite_RetainsTheLeaseUntilTheWriterCloses()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var area = new DeletionArea();
+        using var guard = ShellStagingGuard.CreateAt(area.Root);
+        string path = guard.DirectoryPath;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task transfer = guard.DownloadAsync("0", 5, async (stream, ct) =>
+        {
+            started.SetResult(); await finish.Task; await stream.WriteAsync("hello"u8.ToArray(), ct);
+        }, CancellationToken.None);
+        await started.Task;
+        guard.Dispose();
+        try { Assert.Throws<IOException>(() => { using var other = ShellStagingGuard.Reopen(path); }); }
+        finally { finish.TrySetResult(); }
+        await transfer;
+        using var recovered = ShellStagingGuard.Reopen(path);
+        Assert.Equal("hello", File.ReadAllText(Path.Combine(path, "0")));
+        recovered.Delete();
+        area.AssertSentinel();
+    }
+
+    [Fact]
+    public async Task ExhaustedBoundedRetries_RetainOwnedFilesAndObservableFailure()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var area = new DeletionArea();
+        using var cache = new ShellDownloadCache(5, (_, stream, ct) => stream.WriteAsync("hello"u8.ToArray(), ct).AsTask());
+        using (Stream reader = await cache.OpenAsync(0, 5, CancellationToken.None)) { }
+        string path = cache.DirectoryPath;
+        using (var locked = new FileStream(Path.Combine(path, "0"), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            cache.Dispose();
+            await Assert.IsAssignableFrom<Task>(cache.CleanupRetries).WaitAsync(TimeSpan.FromSeconds(55));
+            Assert.NotNull(cache.CleanupFailure);
+            Assert.True(File.Exists(Path.Combine(path, "0")));
+            Assert.True(File.Exists(Path.Combine(path, ShellStagingGuard.OwnershipName)));
+            Assert.Throws<IOException>(() => { using var other = ShellStagingGuard.Reopen(path); });
+            area.AssertSentinel();
+        }
+        cache.Dispose();
+        Assert.Null(cache.CleanupFailure);
+        Assert.False(Directory.Exists(path));
+    }
 }
 
 internal sealed class DeletionArea : IDisposable

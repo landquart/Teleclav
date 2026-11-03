@@ -11,7 +11,7 @@ namespace Heimdall.App.Views;
 internal enum ShellStagingPoint
 {
     BeforeIntent, AfterIntent, BeforeCreate, AfterCreate, AfterIdentity, DuringWrite,
-    AfterWrite, BeforePublish, AfterPublish, BeforeComplete, AfterDeleteIntent, AfterDelete,
+    AfterWrite, BeforePublish, AfterPublish, BeforeComplete, AfterDeleteIntent, AfterDelete, AfterFileDelete, BeforeJournalDelete,
 }
 
 internal sealed partial class ShellStagingGuard
@@ -31,6 +31,25 @@ internal sealed partial class ShellStagingGuard
     internal OwnedFile? GetFileState(string target) { lock (_gate) { return _objects.GetValueOrDefault(target); } }
 
     internal async Task DownloadAsync(string target, long size, Func<Stream, CancellationToken, Task> download,
+        CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeRequested || _deleted || _directory is null, this);
+            _writers++;
+        }
+        try { await DownloadCoreAsync(target, size, download, ct).ConfigureAwait(false); }
+        finally
+        {
+            lock (_gate)
+            {
+                _writers--;
+                if (_writers == 0 && _disposeRequested) { ReleaseHandles(); }
+            }
+        }
+    }
+
+    private async Task DownloadCoreAsync(string target, long size, Func<Stream, CancellationToken, Task> download,
         CancellationToken ct)
     {
         ValidateFileName(target);

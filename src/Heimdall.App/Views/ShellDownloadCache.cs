@@ -42,6 +42,7 @@ internal sealed class ShellDownloadCache : IDisposable
     internal string DirectoryPath { get; }
     internal CancellationToken StopToken => _stop.Token;
     internal Exception? CleanupFailure { get { lock (_gate) { return _cleanupFailure; } } }
+    internal Task? CleanupRetries { get; private set; }
 
     internal async Task<Stream> OpenAsync(int index, long size, CancellationToken cancellationToken)
     {
@@ -186,7 +187,7 @@ internal sealed class ShellDownloadCache : IDisposable
             if (OperatingSystem.IsWindows() && !_retryScheduled)
             {
                 _retryScheduled = true;
-                _ = RetryCleanupAsync();
+                CleanupRetries = RetryCleanupAsync();
             }
         }
     }

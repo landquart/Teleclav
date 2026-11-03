@@ -20,15 +20,19 @@ internal sealed partial class ShellStagingGuard
         private bool _cleanup;
         private int _version = 2;
         private bool _failed;
+        private long _expectedLength;
+        private readonly FileIdentity _identity;
 
         private ShellStagingJournal(SafeFileHandle handle)
         {
             try
             {
                 FileIdentity identity = Identity(handle);
-                if ((identity.Attributes & (DirectoryAttribute | ReparseAttribute)) != 0)
+                if ((identity.Attributes & (DirectoryAttribute | ReparseAttribute)) != 0
+                    || !GetFileInformationByHandle(handle, out FileInformation info) || info.NumberOfLinks != 1)
                     throw new IOException("Ownership journal is not a regular file.");
                 RequireTrustedAcl(handle, true, file: true);
+                _identity = identity;
                 _stream = new FileStream(handle, FileAccess.ReadWrite);
             }
             catch { handle.Dispose(); throw; }
@@ -116,6 +120,7 @@ internal sealed partial class ShellStagingGuard
                     if (record.BaseStream.Position != record.BaseStream.Length) { throw new IOException("Invalid ownership record."); }
                 }
                 if (first) { throw new IOException("Missing ownership header."); }
+                journal._expectedLength = journal._stream.Length;
                 return journal;
             }
             catch (EndOfStreamException ex) { journal.Dispose(); throw new IOException("Truncated ownership journal.", ex); }
@@ -200,6 +205,7 @@ internal sealed partial class ShellStagingGuard
                 writer.Flush();
                 _stream.Flush(flushToDisk: true);
                 _previous = hash;
+                _expectedLength = _stream.Length;
             }
             catch { _failed = true; throw; }
         }
@@ -218,6 +224,36 @@ internal sealed partial class ShellStagingGuard
             writer.Write(identity.Volume);
             writer.Write(identity.IndexHigh);
             writer.Write(identity.IndexLow);
+        }
+
+        internal void Validate()
+        {
+            if (_failed || _stream.Length != _expectedLength || Identity(_stream.SafeFileHandle) != _identity
+                || !GetFileInformationByHandle(_stream.SafeFileHandle, out FileInformation info) || info.NumberOfLinks != 1)
+                throw new IOException("Ownership journal identity or length changed.");
+            RequireTrustedAcl(_stream.SafeFileHandle, true, file: true);
+            long position = _stream.Position;
+            try
+            {
+                _stream.Position = 0;
+                byte[] previous = new byte[32];
+                using var reader = new BinaryReader(_stream, Encoding.UTF8, leaveOpen: true);
+                while (_stream.Position < _expectedLength)
+                {
+                    if (_expectedLength - _stream.Position < 4) { throw new IOException("Truncated live ownership journal."); }
+                    int length = reader.ReadInt32();
+                    if (length is < 1 or > 128 || _expectedLength - _stream.Position < length + 32)
+                        throw new IOException("Invalid live ownership record.");
+                    byte[] payload = reader.ReadBytes(length);
+                    byte[] hash = reader.ReadBytes(32);
+                    if (!CryptographicOperations.FixedTimeEquals(hash, Digest(previous, payload)))
+                        throw new IOException("Damaged live ownership journal.");
+                    previous = hash;
+                }
+                if (!CryptographicOperations.FixedTimeEquals(previous, _previous))
+                    throw new IOException("Live ownership journal prefix changed.");
+            }
+            finally { _stream.Position = position; }
         }
 
         internal void Delete()
