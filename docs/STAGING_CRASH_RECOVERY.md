@@ -155,6 +155,10 @@ handles are still live, then the parent calls `Process.Kill(entireProcessTree: t
 A readiness failure is a failed test; fixture disposal killing a stuck process
 is never counted as successful crash coverage.
 
+The publication-intent boundary stops after the Publishing record is flushed but
+before rename. Together with the post-rename boundary, this exercises both legal
+names for a file interrupted during publication.
+
 Each external-termination case starts a fresh scanner process, checks the
 expected owned/retained objects, repeats recovery, and starts a fresh successful
 transfer. Tests also keep external sentinel data and check it before and after

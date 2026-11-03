@@ -12,7 +12,7 @@ internal enum ShellStagingPoint
 {
     BeforeIntent, AfterIntent, BeforeCreate, AfterCreate, AfterIdentity, DuringWrite,
     AfterWrite, BeforePublish, AfterPublish, BeforeComplete, AfterDeleteIntent, AfterDelete, AfterFileDelete, BeforeJournalDelete,
-    AfterOperationDirectory, AfterOwnershipJournal,
+    AfterOperationDirectory, AfterOwnershipJournal, AfterPublishIntent,
 }
 
 internal sealed partial class ShellStagingGuard
@@ -85,6 +85,7 @@ internal sealed partial class ShellStagingGuard
         Fault?.Invoke(ShellStagingPoint.BeforePublish);
         ct.ThrowIfCancellationRequested();
         Save(entry = entry with { Stage = FileStage.Publishing });
+        Fault?.Invoke(ShellStagingPoint.AfterPublishIntent);
         if (ValidateOwnedHandle(entry, file.SafeFileHandle) != identity) { throw new IOException("Staging identity changed before publication."); }
         Rename(file.SafeFileHandle, target);
         file.Flush(flushToDisk: true);

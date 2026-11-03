@@ -35,6 +35,7 @@ if (args[1].StartsWith("kill:", StringComparison.Ordinal))
     {
         "directory" => ShellStagingPoint.AfterOperationDirectory,
         "journal" => ShellStagingPoint.AfterOwnershipJournal,
+        "publish-intent" => ShellStagingPoint.AfterPublishIntent,
         "reader-open" or "reader-closed" => null,
         _ => Enum.Parse<ShellStagingPoint>(boundary)
     };

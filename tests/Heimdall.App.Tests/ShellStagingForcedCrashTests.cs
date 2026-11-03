@@ -17,6 +17,7 @@ public sealed class ShellStagingForcedCrashTests
     [Theory]
     [MemberData(nameof(KillPoints))]
     [InlineData("journal")]
+    [InlineData("publish-intent")]
     [InlineData("reader-closed")]
     public async Task ExternalTermination_RecoversEveryRegisteredBoundaryInANewProcess(string point)
     {
@@ -30,6 +31,14 @@ public sealed class ShellStagingForcedCrashTests
         {
             string operation = Assert.Single(Directory.GetDirectories(area.Root));
             Assert.Equal("he", File.ReadAllText(Assert.Single(Directory.GetFiles(operation, "*.part"))));
+        }
+        if (point == "publish-intent")
+        {
+            string operation = Assert.Single(Directory.GetDirectories(area.Root));
+            using var inspection = ShellStagingGuard.Reopen(operation);
+            Assert.Equal(ShellStagingGuard.FileStage.Publishing, inspection.GetFileState("0")!.Stage);
+            Assert.Single(Directory.GetFiles(operation, "*.part"));
+            Assert.False(File.Exists(Path.Combine(operation, "0")));
         }
         await Scan(area.Root);
         Assert.Empty(Directory.GetDirectories(area.Root));
