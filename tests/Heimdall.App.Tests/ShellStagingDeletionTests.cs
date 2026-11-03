@@ -50,7 +50,14 @@ public sealed class ShellStagingDeletionTests
             Assert.Equal("hello", File.ReadAllText(Path.Combine(guard.DirectoryPath, "0")));
             area.AssertSentinel();
         }
-        finally { if (directory.Exists) { directory.SetAccessControl(original); } }
+        finally
+        {
+            if (directory.Exists)
+            {
+                original.SetSecurityDescriptorBinaryForm(original.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+                directory.SetAccessControl(original);
+            }
+        }
         guard.Delete();
     }
 

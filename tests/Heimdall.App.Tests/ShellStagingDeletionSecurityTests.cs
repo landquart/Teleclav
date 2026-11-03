@@ -210,7 +210,11 @@ public sealed class ShellStagingDeletionSecurityTests
             FileSystemRights.ReadAttributes | FileSystemRights.ReadPermissions, AccessControlType.Deny));
         file.SetAccessControl(changed);
         try { Assert.Throws<IOException>(guard.Delete); area.AssertSentinel(); }
-        finally { file.SetAccessControl(original); }
+        finally
+        {
+            original.SetSecurityDescriptorBinaryForm(original.GetSecurityDescriptorBinaryForm(), AccessControlSections.Access);
+            file.SetAccessControl(original);
+        }
         Assert.Equal("hello", File.ReadAllText(file.FullName));
         guard.Delete();
     }
