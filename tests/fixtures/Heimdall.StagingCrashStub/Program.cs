@@ -5,7 +5,7 @@ using Heimdall.App.Views;
 if (!OperatingSystem.IsWindows()) { return 2; }
 if (args[1] == "scan")
 {
-    ShellStagingGuard.RecoverAbandoned(args[0], 128, CancellationToken.None);
+    await ShellStagingRecovery.RunAsync(args[0], CancellationToken.None, TimeSpan.FromSeconds(2));
     return 0;
 }
 if (args[1] == "recover")
@@ -36,6 +36,7 @@ if (args[1].StartsWith("kill:", StringComparison.Ordinal))
         "directory" => ShellStagingPoint.AfterOperationDirectory,
         "journal" => ShellStagingPoint.AfterOwnershipJournal,
         "publish-intent" => ShellStagingPoint.AfterPublishIntent,
+        nameof(ShellStagingPoint.DuringWrite) => null,
         "reader-open" or "reader-closed" => null,
         _ => Enum.Parse<ShellStagingPoint>(boundary)
     };
@@ -45,8 +46,14 @@ if (args[1].StartsWith("kill:", StringComparison.Ordinal))
     });
     await owned.DownloadAsync("0", 5, async (stream, ct) =>
     {
-        // DuringWrite now stops with two of the five bytes written, not a completed file.
         await stream.WriteAsync("he"u8.ToArray(), ct);
+        if (boundary == nameof(ShellStagingPoint.DuringWrite))
+        {
+            // FileStream buffers small writes. Flush the fixture's first fragment before killing
+            // it so this case proves recovery of nonempty partial data, not only an empty file.
+            await stream.FlushAsync(ct);
+            PauseForTermination();
+        }
         await stream.WriteAsync("llo"u8.ToArray(), ct);
     }, CancellationToken.None);
     if (boundary is "reader-open" or "reader-closed")

@@ -1,4 +1,5 @@
 /* Copyright 2026. Licensed under the Apache License, Version 2.0. */
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -35,7 +36,7 @@ public sealed class ShellStagingForcedCrashTests
         if (point == "publish-intent")
         {
             string operation = Assert.Single(Directory.GetDirectories(area.Root));
-            using var inspection = ShellStagingGuard.Reopen(operation);
+            using var inspection = await InspectAfterTermination(operation);
             Assert.Equal(ShellStagingGuard.FileStage.Publishing, inspection.GetFileState("0")!.Stage);
             Assert.Single(Directory.GetFiles(operation, "*.part"));
             Assert.False(File.Exists(Path.Combine(operation, "0")));
@@ -280,6 +281,20 @@ public sealed class ShellStagingForcedCrashTests
     {
         using var scanner = new CrashChild(root, "scan");
         await scanner.Succeed();
+    }
+
+    private static async Task<ShellStagingGuard> InspectAfterTermination(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try { return ShellStagingGuard.Reopen(path); }
+            catch (IOException ex) when (attempt < 2 && ex.InnerException is Win32Exception { NativeErrorCode: 32 or 33 })
+            {
+                // The product scheduler also retries sharing refusals. Keep the same identity
+                // assertions after acquiring a lease; do not turn a persistent refusal into a pass.
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+        }
     }
 
     private static async Task Transfer(string root)

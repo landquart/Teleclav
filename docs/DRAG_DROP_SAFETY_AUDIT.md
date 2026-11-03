@@ -188,6 +188,8 @@ All new security tests have control files outside staging and verify unchanged c
 See [STAGING_CRASH_RECOVERY.md](STAGING_CRASH_RECOVERY.md) for the ownership and
 lease model, state-by-state recovery policy, external process-termination tests,
 bounded retries and manual handling of pre-journal temporary directories.
+The extended crash fixture also source-links the product recovery scheduler;
+its count-only warnings use a test stderr adapter instead of application logging.
 
 This section supersedes earlier statements that startup discovery is absent. After the normal single-instance decision, product startup schedules recovery off the dispatcher. Independent settings profiles still share per-user Shell staging; only the exclusive ownership-journal lease authorizes abandonment of an operation. Privilege-helper and suppressed test lifecycles do not run product recovery. Application exit cancels future recovery work without waiting on or force-closing another owner's streams.
 

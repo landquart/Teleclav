@@ -159,6 +159,20 @@ The publication-intent boundary stops after the Publishing record is flushed but
 before rename. Together with the post-rename boundary, this exercises both legal
 names for a file interrupted during publication.
 
+The scanner fixture source-links the product retry scheduler, including its
+bounded sharing-refusal retries. The nonempty-partial case explicitly flushes
+the fixture's first two bytes before signaling readiness; other crash points can
+legitimately lose bytes still in the managed FileStream buffer. This does not add
+per-write flushing to production downloads or claim power-loss durability.
+
+Windows CI 73 on `b88bc1c5` ran 171 security/cache cases: 169 passed and two new
+fixture checks failed. The partial-content assertion observed an empty file after
+unflushed buffered writes, and immediate publication-state inspection encountered
+a sharing refusal. The fixture now flushes its deliberate partial fragment, scans
+through the product scheduler and bounds inspection retries to sharing errors
+32/33 only. Content, protocol-state, foreign-data and subsequent-transfer assertions
+remain required; persistent refusal is still a test failure.
+
 Each external-termination case starts a fresh scanner process, checks the
 expected owned/retained objects, repeats recovery, and starts a fresh successful
 transfer. Tests also keep external sentinel data and check it before and after

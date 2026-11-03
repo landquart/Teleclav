@@ -1,10 +1,12 @@
 /* Copyright 2026. Licensed under the Apache License, Version 2.0. */
 using System.IO;
+using System.Runtime.Versioning;
 using Heimdall.Core.Logging;
 using Result = Heimdall.App.Views.ShellStagingGuard.RecoveryResult;
 
 namespace Heimdall.App.Views;
 
+[SupportedOSPlatform("windows")]
 internal static class ShellStagingRecovery
 {
     internal static Result Recover(string root, CancellationToken cancellationToken = default, int maximumEntries = 128)
