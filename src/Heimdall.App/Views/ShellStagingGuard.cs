@@ -72,6 +72,16 @@ internal sealed class ShellStagingGuard : IDisposable
         lock (_gate) { _files.Add(name, identity); }
     }
 
+    internal void Verify(string name, SafeFileHandle file)
+    {
+        FileIdentity actual = Identity(file);
+        lock (_gate)
+        {
+            if (!_files.TryGetValue(name, out FileIdentity expected) || actual != expected)
+                throw new IOException("Staging file identity changed; reading refused.");
+        }
+    }
+
     internal void Delete()
     {
         SafeFileHandle directory = _directory ?? throw new ObjectDisposedException(nameof(ShellStagingGuard));
