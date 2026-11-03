@@ -35,6 +35,7 @@ internal sealed partial class ShellStagingGuard : IDisposable
 
     private ShellStagingGuard(string path, bool reopen)
     {
+        ValidatePath(path);
         _path = Path.GetFullPath(path);
         try
         {

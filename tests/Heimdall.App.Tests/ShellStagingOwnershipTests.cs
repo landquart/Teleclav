@@ -211,8 +211,10 @@ public sealed class ShellStagingOwnershipRecoveryTests
         second.Delete();
     }
 
-    [Fact]
-    public void WritableAncestor_IsRejectedBeforeTraversingFurther()
+    [Theory]
+    [InlineData(FileSystemRights.Modify)]
+    [InlineData(FileSystemRights.CreateFiles)]
+    public void WritableAncestor_IsRejectedBeforeTraversingFurther(FileSystemRights rights)
     {
         if (!OperatingSystem.IsWindows()) { return; }
         using var area = new OwnershipArea();
@@ -220,11 +222,22 @@ public sealed class ShellStagingOwnershipRecoveryTests
         var parent = new DirectoryInfo(area.Parent);
         var security = parent.GetAccessControl();
         var everyone = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null);
-        security.AddAccessRule(new FileSystemAccessRule(everyone, FileSystemRights.Modify, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(everyone, rights, AccessControlType.Allow));
         parent.SetAccessControl(security);
         string nested = Path.Combine(area.Root, "Nested", "Staging");
         Assert.Throws<IOException>(() => ShellStagingGuard.CreateAt(nested));
         Assert.False(Directory.Exists(Path.Combine(area.Root, "Nested")));
+    }
+
+    [Theory]
+    [InlineData("Staging.")]
+    [InlineData("Staging ")]
+    [InlineData("NUL")]
+    public void AmbiguousWin32Component_IsRejected(string component)
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var area = new OwnershipArea();
+        Assert.Throws<IOException>(() => ShellStagingGuard.CreateAt(Path.Combine(area.Parent, component)));
     }
 
     [Fact]

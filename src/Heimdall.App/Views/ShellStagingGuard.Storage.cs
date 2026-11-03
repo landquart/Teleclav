@@ -133,8 +133,8 @@ internal sealed partial class ShellStagingGuard
                 {
                     if ((ace.AceFlags & AceFlags.InheritOnly) != 0) { continue; }
                     if (ace is not CommonAce common) { throw new IOException("Unsupported ancestor access control entry."); }
-                    // Adding siblings is allowed on shared ancestors. Changing/deleting existing objects is not.
-                    const int dangerous = 0x10000 | 0x40000 | 0x80000 | 0x40 | 0x100 | 0x10
+                    // Adding sibling directories is allowed. FILE_ADD_FILE aliases FILE_WRITE_DATA and can change reparse data.
+                    const int dangerous = 0x10000 | 0x40000 | 0x80000 | 0x40 | 0x100 | 0x10 | 0x2
                         | unchecked((int)0x10000000) | unchecked((int)0x40000000);
                     if (common.AceQualifier == AceQualifier.AccessAllowed && (common.AccessMask & dangerous) != 0
                         && !trusted.Contains(common.SecurityIdentifier))
@@ -159,11 +159,33 @@ internal sealed partial class ShellStagingGuard
             throw new IOException("Invalid staging file name.");
     }
 
+    private static void ValidatePath(string path)
+    {
+        if (!Path.IsPathFullyQualified(path)) { throw new IOException("Staging path must be absolute."); }
+        string drive = Path.GetPathRoot(path) ?? throw new IOException("Missing staging volume.");
+        foreach (string component in path[drive.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries))
+            ValidateComponent(component);
+    }
+
+    private static void ValidateComponent(string name)
+    {
+        if (name.Length is < 1 or > 255 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || name.EndsWith(' ') || name.EndsWith('.') || IsDeviceName(name))
+            throw new IOException("Invalid staging component.");
+    }
+
+    private static bool IsDeviceName(string name)
+    {
+        string stem = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+        return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
+            || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal))
+                && stem[3] is >= '1' and <= '9' or '¹' or '²' or '³');
+    }
+
     private static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, bool create,
         bool writableDirectory, bool directory, bool journal = false, bool deleteDirectory = false)
     {
-        if (name.Length == 0 || name.IndexOfAny(['\\', '/', ':', '\0']) >= 0 || name is "." or "..")
-            throw new IOException("Invalid staging component.");
+        ValidateComponent(name);
         IntPtr buffer = Marshal.StringToHGlobalUni(name);
         IntPtr unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
         byte[] descriptor = directory ? ShellStagingDirectory.CreateSecurityDescriptor()
