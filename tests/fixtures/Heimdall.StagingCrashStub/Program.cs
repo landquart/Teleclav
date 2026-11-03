@@ -1,6 +1,6 @@
 /* Copyright 2026. Licensed under the Apache License, Version 2.0. */
-using Heimdall.App.Views;
 using System.IO;
+using Heimdall.App.Views;
 
 if (!OperatingSystem.IsWindows()) { return 2; }
 if (args[1] == "recover")
