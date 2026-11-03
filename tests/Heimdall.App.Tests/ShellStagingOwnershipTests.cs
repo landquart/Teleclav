@@ -8,6 +8,30 @@ namespace Heimdall.App.Tests;
 public sealed class ShellStagingOwnershipTests
 {
     [Fact]
+    public async Task FailedDownload_AfterPartialCreation_RemainsRecoverable()
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        var cache = new ShellDownloadCache(2, async (_, path, ct) =>
+        {
+            await File.WriteAllTextAsync(path + ".unregistered.part", "x", ct);
+            throw new IOException("Interrupted after partial creation.");
+        });
+        string directory = cache.DirectoryPath;
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => cache.OpenAsync(0, 2, CancellationToken.None));
+            cache.Dispose();
+            Assert.Null(cache.CleanupFailure);
+            Assert.False(Directory.Exists(directory));
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "0.unregistered.part"));
+            cache.Dispose();
+        }
+    }
+
+    [Fact]
     public void Cache_EstablishesPersistentOwnershipBeforeDownloading()
     {
         if (!OperatingSystem.IsWindows()) { return; }
