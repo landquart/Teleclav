@@ -141,11 +141,27 @@ internal sealed class DeletionArea : IDisposable
     internal void AssertSentinel() => Assert.Equal("outside staging: preserve", File.ReadAllText(Sentinel));
     public void Dispose()
     {
-        try { AssertSentinel(); }
+        try
+        {
+            AssertSentinel();
+            if (Directory.Exists(Parent)) { RemoveFixtureTree(Parent); }
+            AssertSentinel();
+        }
         finally
         {
-            if (Directory.Exists(Parent)) { Directory.Delete(Parent, recursive: true); }
-            Directory.Delete(Controls, recursive: true);
+            RemoveFixtureTree(Controls);
         }
+    }
+
+    private static void RemoveFixtureTree(string path)
+    {
+        // Test-owned data only. Unlink reparse entries themselves; never ask recursive deletion to handle a mount point.
+        foreach (FileSystemInfo entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
+        {
+            if ((entry.Attributes & FileAttributes.Directory) == 0) { File.Delete(entry.FullName); }
+            else if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) { Directory.Delete(entry.FullName); }
+            else { RemoveFixtureTree(entry.FullName); }
+        }
+        Directory.Delete(path);
     }
 }
