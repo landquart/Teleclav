@@ -140,6 +140,34 @@ public sealed class EmbeddedSftpUploadConflictTests
         Assert.Equal("SftpErrorUploadInventoryFailed", viewModel.StatusText);
     }
 
+    [Fact]
+    public async Task UploadEntriesAsync_SourceReplacedDuringConflictDialog_IsNotSent()
+    {
+        using TempDirectory temp = new();
+        string source = Path.Combine(temp.Path, "entry.txt");
+        string original = Path.Combine(temp.Path, "original.txt");
+        await File.WriteAllTextAsync(source, "original");
+        RecordingRemoteBrowser browser = new();
+        browser.Listings["/dst"] = [CreateRemoteEntry("entry.txt", "/dst/entry.txt", isDirectory: false)];
+        RecordingConflictPresenter presenter = new(dialog =>
+        {
+            File.Move(source, original);
+            File.WriteAllText(source, "substitute");
+            FileConflictRowViewModel row = Assert.Single(dialog.Rows);
+            return new FileConflictDialogResult(
+                [new FileConflictDecision(row.ItemIndex, FileConflictResolutionChoice.Replace)]);
+        });
+        EmbeddedSftpViewModel viewModel = CreateViewModel(browser, presenter);
+
+        await viewModel.UploadEntriesAsync([source], "/dst");
+
+        Assert.Equal(1, presenter.CallCount);
+        Assert.Empty(browser.UploadCalls);
+        Assert.Equal(SftpTransferJobStatus.Failed, Assert.Single(viewModel.TransferJobs).Status);
+        Assert.Equal("original", await File.ReadAllTextAsync(original));
+        Assert.Equal("substitute", await File.ReadAllTextAsync(source));
+    }
+
     /// <remarks>
     /// "Transfer failed" alone left the user to work out which of their files were on the
     /// server. The count of files that landed is part of the verdict.
@@ -470,8 +498,14 @@ public sealed class EmbeddedSftpUploadConflictTests
         });
         EmbeddedSftpViewModel viewModel = CreateViewModel(browser, presenter);
 
+        List<string> statuses = [];
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(viewModel.StatusText)) { statuses.Add(viewModel.StatusText); }
+        };
         await viewModel.UploadEntriesAsync([localDirectory], "/srv");
 
+        Assert.DoesNotContain("SftpStatusTransferComplete", statuses);
         Assert.Equal(1, presenter.CallCount);
         Assert.Empty(browser.CreateDirectoryCalls);
         Assert.Empty(browser.UploadCalls);

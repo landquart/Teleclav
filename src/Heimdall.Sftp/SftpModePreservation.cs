@@ -156,13 +156,15 @@ public static class SftpModePreservation
         StagedUploadOperations operations,
         Stream source,
         Action<long> reportProgress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? expectedLength = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(reportProgress);
 
         cancellationToken.ThrowIfCancellationRequested();
+        expectedLength ??= source.CanSeek ? source.Length - source.Position : null;
 
         // One exclusive open, and the handle it returns is the handle the bytes go through. The mode
         // travels as an argument rather than being baked into the wiring so a test can capture what
@@ -198,6 +200,8 @@ public static class SftpModePreservation
             while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (expectedLength is long limit && read > limit - written)
+                    throw new IOException("The local upload source grew during the transfer.");
                 destination.Write(buffer, 0, read);
                 written += read;
 
@@ -206,6 +210,8 @@ public static class SftpModePreservation
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (expectedLength is long length && written != length)
+                throw new IOException("The local upload source ended before its expected length.");
             destination.Flush();
         }
 

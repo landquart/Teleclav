@@ -163,6 +163,16 @@ public sealed class SftpAtomicUploadTests
         Assert.Equal("/srv/app", GetRemoteDirectory(tempPath));
     }
 
+    [Fact]
+    public void CreateRemoteTempPath_LongUtf8NameFitsTheSameDirectory()
+    {
+        string target = "/srv/" + new string('é', 120);
+        string tempPath = SftpAtomicUpload.CreateRemoteTempPath(target);
+        Assert.Equal("/srv", GetRemoteDirectory(tempPath));
+        Assert.InRange(System.Text.Encoding.UTF8.GetByteCount(tempPath.AsSpan("/srv/".Length)), 1, 255);
+        Assert.EndsWith(".part", tempPath, StringComparison.Ordinal);
+    }
+
     private static string GetRemoteDirectory(string remotePath)
     {
         int separator = remotePath.LastIndexOf('/');

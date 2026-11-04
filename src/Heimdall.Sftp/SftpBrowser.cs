@@ -841,12 +841,20 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             ct);
     }
 
+    /// <inheritdoc/>
+    public Task UploadFileAsync(string localPath, string remotePath, bool overwrite,
+        LocalUploadSnapshot source, CancellationToken ct = default)
+        => UploadFileAsync(localPath, remotePath,
+            overwrite ? UploadCommitMode.ReplaceExisting : UploadCommitMode.PublishByExclusiveRename,
+            ct, source: source);
+
     private async Task UploadFileAsync(
         string localPath,
         string remotePath,
         UploadCommitMode commitMode,
         CancellationToken ct,
-        ISftpExecCommandRunner? noClobberRunner = null)
+        ISftpExecCommandRunner? noClobberRunner = null,
+        LocalUploadSnapshot? source = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
@@ -872,8 +880,11 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         }
 
         string fileName = Path.GetFileName(localPath);
-        FileInfo fileInfo = LocalUploadSource.GetRequiredRegularFile(localPath);
-        long totalBytes = fileInfo.Length;
+        ct.ThrowIfCancellationRequested();
+        await using FileStream fileStream = OperatingSystem.IsWindows()
+            ? (source ??= LocalUploadSnapshot.Capture(localPath)).OpenRead()
+            : OpenPortableUploadSource(localPath);
+        long totalBytes = fileStream.Length;
 
         // Before the temporary path is even chosen, let alone created. A replacement that cannot
         // put back what it removes must not begin: refusing after the upload would make the
@@ -882,14 +893,14 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         // only after every byte had been staged - and it is also what tells a creation from a
         // replacement: a destination that is absent needs no metadata preflight, which used to
         // cost every new file two exec channels it had no use for.
+        UploadTargetStamp? targetStamp = null;
         if (commitMode == UploadCommitMode.ReplaceExisting)
         {
-            RemoteEntryKind? destinationKind = await TryGetEntryKindWithoutFollowingAsync(remotePath, ct).ConfigureAwait(false);
-            SftpAtomicUpload.EnsureUploadTargetSupported(remotePath, destinationKind);
-            if (destinationKind is not null)
-            {
+            targetStamp = await ReadUploadTargetStampAsync(remotePath, ct).ConfigureAwait(false);
+            if (targetStamp is null)
+                commitMode = UploadCommitMode.PublishByExclusiveRename;
+            else
                 await EnsureReplacementPreservesMetadataAsync(remotePath, ct).ConfigureAwait(false);
-            }
         }
 
         string tempRemotePath = SftpAtomicUpload.CreateRemoteTempPath(remotePath);
@@ -904,13 +915,6 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             SftpClient client = GetConnectedClient();
             try
             {
-                await using FileStream fileStream = new FileStream(
-                    localPath,
-                    FileMode.Open,
-                    FileAccess.Read,
-                    FileShare.Read,
-                    bufferSize: 81920,
-                    useAsync: true);
                 using CancellationAwareStream inputStream = new(fileStream, ct);
 
                 await Task.Run(() =>
@@ -1011,6 +1015,8 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                             },
                             Commit: () =>
                             {
+                                ct.ThrowIfCancellationRequested();
+                                if (OperatingSystem.IsWindows()) { source!.VerifyRead(fileStream.SafeFileHandle); }
                                 // Second characterisation, immediately before publication. The
                                 // first one is stale by now: a long upload leaves a window in
                                 // which the destination can acquire an ACL, a security attribute
@@ -1022,12 +1028,20 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                                     EnsureReplacementPreservesMetadataAsync(remotePath, ct)
                                         .GetAwaiter()
                                         .GetResult();
+                                    ct.ThrowIfCancellationRequested();
+                                    if (ReadUploadTargetStamp(client, remotePath) != targetStamp)
+                                        throw new IOException("The remote upload destination changed before replacement.");
                                 }
 
                                 // A new file commits by the version 3 rename, which refuses an
                                 // existing name; it must never reach the replacing commit either.
                                 if (commitMode == UploadCommitMode.PublishByExclusiveRename)
                                 {
+                                    // SSH.NET canonicalizes rename arguments. Refuse an existing
+                                    // entry by its own name before it can resolve a symbolic link.
+                                    if (TryGetEntryWithoutFollowingTarget(client, remotePath) is not null)
+                                        throw new RemoteDestinationExistsException(remotePath);
+
                                     SftpAtomicUpload.CommitCreate(
                                         tempRemotePath,
                                         remotePath,
@@ -1070,7 +1084,8 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                             written,
                             totalBytes,
                             IsUpload: true)),
-                        ct);
+                        ct,
+                        expectedLength: totalBytes);
                 }, ct).ConfigureAwait(false);
             }
             catch
@@ -1101,6 +1116,35 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         {
             _clientLock.Release();
         }
+    }
+
+    private readonly record struct UploadTargetStamp(long Size, DateTime Modified, uint Mode, int UserId, int GroupId);
+
+    private async Task<UploadTargetStamp?> ReadUploadTargetStampAsync(string path, CancellationToken ct)
+    {
+        await _clientLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SftpClient client = GetConnectedClient();
+            return await Task.Run(() => ReadUploadTargetStamp(client, path), ct).ConfigureAwait(false);
+        }
+        finally { _clientLock.Release(); }
+    }
+
+    private static UploadTargetStamp? ReadUploadTargetStamp(SftpClient client, string path)
+    {
+        ISftpFile? entry = TryGetEntryWithoutFollowingTarget(client, path);
+        SftpAtomicUpload.EnsureUploadTargetSupported(path, entry is null ? null : GetRemoteEntryKind(entry));
+        if (entry is null) { return null; }
+        SftpFileAttributes attrs = entry.Attributes;
+        return new UploadTargetStamp(attrs.Size, attrs.LastWriteTimeUtc, GetPermissionMode(attrs),
+            attrs.UserId, attrs.GroupId);
+    }
+
+    private static FileStream OpenPortableUploadSource(string path)
+    {
+        LocalUploadSource.GetRequiredRegularFile(path);
+        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
     }
 
     /// <summary>

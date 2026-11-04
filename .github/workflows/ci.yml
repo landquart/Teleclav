@@ -453,7 +453,7 @@ jobs:
       - name: Test real local OpenSSH SFTP
         run: >
           dotnet test tests/Heimdall.Sftp.Tests/Heimdall.Sftp.Tests.csproj --no-restore -c Release
-          --filter FullyQualifiedName~ShellFolderSftpIntegrationTests.FolderPlanAndBoundedDownload_PreserveTreeAndHashes
+          --filter FullyQualifiedName~ShellFolderSftpIntegrationTests
           --logger "trx;LogFileName=openssh.trx" --results-directory TestResults/OpenSSH
       - name: Require the integration test to execute and pass
         shell: bash
@@ -463,8 +463,8 @@ jobs:
           root = ET.parse('TestResults/OpenSSH/openssh.trx').getroot()
           ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
           tests = root.findall('.//t:UnitTestResult', ns)
-          if len(tests) != 1 or tests[0].get('outcome') != 'Passed':
-              raise SystemExit('Expected exactly one passed OpenSSH test; no skips are accepted.')
+          if len(tests) != 2 or any(test.get('outcome') != 'Passed' for test in tests):
+              raise SystemExit('Expected exactly two passed OpenSSH tests; no skips are accepted.')
           PY
       - name: Upload OpenSSH test results
         if: always()

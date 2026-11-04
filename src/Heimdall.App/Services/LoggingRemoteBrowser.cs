@@ -209,6 +209,15 @@ public sealed class LoggingRemoteBrowser
             (ms, category) => SessionOperationRecord.Upload.Error(_protocol, _host, remotePath, localPath, ms, category));
 
     /// <inheritdoc />
+    public Task UploadFileAsync(string localPath, string remotePath, bool overwrite,
+        LocalUploadSnapshot source, CancellationToken ct = default)
+        => RunLoggedAsync(
+            () => _inner.UploadFileAsync(localPath, remotePath, overwrite, source, ct),
+            ms => SessionOperationRecord.Upload.Success(_protocol, _host, remotePath, localPath, source.Length, ms),
+            ms => SessionOperationRecord.Upload.Cancelled(_protocol, _host, remotePath, localPath, ms),
+            (ms, category) => SessionOperationRecord.Upload.Error(_protocol, _host, remotePath, localPath, ms, category));
+
+    /// <inheritdoc />
     public Task CreateDirectoryAsync(string path, CancellationToken ct = default)
         => RunLoggedAsync(
             () => _inner.CreateDirectoryAsync(path, ct),
