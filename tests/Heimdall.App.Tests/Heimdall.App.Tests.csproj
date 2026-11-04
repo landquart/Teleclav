@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Heimdall.App\Heimdall.App.csproj" />
+    <ProjectReference Include="..\fixtures\Heimdall.StagingCrashStub\Heimdall.StagingCrashStub.csproj"
+                      ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -55,6 +57,19 @@
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>UpdateStubPath</_Parameter1>
         <_Parameter2>$([System.IO.Path]::ChangeExtension($(UpdateStubTargetPath), '.exe'))</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="InjectStagingCrashStubPath" BeforeTargets="GetAssemblyAttributes" DependsOnTargets="ResolveProjectReferences">
+    <MSBuild Projects="..\fixtures\Heimdall.StagingCrashStub\Heimdall.StagingCrashStub.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);Platform=$(Platform)">
+      <Output TaskParameter="TargetOutputs" PropertyName="StagingCrashStubTargetPath" />
+    </MSBuild>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>StagingCrashStubPath</_Parameter1>
+        <_Parameter2>$([System.IO.Path]::ChangeExtension($(StagingCrashStubTargetPath), '.exe'))</_Parameter2>
       </AssemblyAttribute>
     </ItemGroup>
   </Target>

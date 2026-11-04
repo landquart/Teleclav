@@ -8,17 +8,21 @@ internal sealed class ShellDownloadCache : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<int, Entry> _entries = [];
-    private readonly Func<int, string, CancellationToken, Task> _download;
+    private readonly Func<int, Stream, CancellationToken, Task> _download;
     private readonly CancellationTokenSource _stop = new();
     private readonly long _limit;
     private readonly TimeSpan _waitLimit;
+    private readonly ShellStagingGuard? _guard;
     private long _reserved;
     private int _readers;
     private int _downloads;
     private bool _disposed;
     private bool _cleaned;
+    private bool _retryScheduled;
+    private Exception? _cleanupFailure;
 
-    internal ShellDownloadCache(long limit, Func<int, string, CancellationToken, Task> download, TimeSpan? waitLimit = null)
+    internal ShellDownloadCache(long limit, Func<int, Stream, CancellationToken, Task> download, TimeSpan? waitLimit = null,
+        Action<string>? created = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(limit);
         _download = download ?? throw new ArgumentNullException(nameof(download));
@@ -26,11 +30,19 @@ internal sealed class ShellDownloadCache : IDisposable
         _waitLimit = waitLimit ?? TimeSpan.FromMinutes(30);
         if (_waitLimit <= TimeSpan.Zero || _waitLimit > TimeSpan.FromMilliseconds(uint.MaxValue - 1))
             throw new ArgumentOutOfRangeException(nameof(waitLimit));
-        DirectoryPath = ShellStagingDirectory.Create();
+        if (OperatingSystem.IsWindows())
+        {
+            _guard = ShellStagingGuard.Create();
+            DirectoryPath = _guard.DirectoryPath;
+        }
+        else { DirectoryPath = ShellStagingDirectory.Create(); }
+        created?.Invoke(DirectoryPath);
     }
 
     internal string DirectoryPath { get; }
     internal CancellationToken StopToken => _stop.Token;
+    internal Exception? CleanupFailure { get { lock (_gate) { return _cleanupFailure; } } }
+    internal Task? CleanupRetries { get; private set; }
 
     internal async Task<Stream> OpenAsync(int index, long size, CancellationToken cancellationToken)
     {
@@ -48,6 +60,7 @@ internal sealed class ShellDownloadCache : IDisposable
                     throw new IOException("The temporary transfer space limit would be exceeded.");
                 }
 
+                if (OperatingSystem.IsWindows()) { _guard!.EnsureAvailableSpace(size); }
                 _reserved += size;
                 _downloads++;
                 string path = Path.Combine(DirectoryPath, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -72,10 +85,21 @@ internal sealed class ShellDownloadCache : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            FileStream file = new(savedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
-                81920, FileOptions.SequentialScan);
-            _readers++;
-            return new Lease(file, ReleaseReader);
+            FileStream file = OperatingSystem.IsWindows()
+                ? _guard!.OpenPublishedRead(Path.GetFileName(savedPath))
+                : new FileStream(savedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+                    81920, FileOptions.SequentialScan);
+            try
+            {
+                var lease = new Lease(file, ReleaseReader);
+                _readers++;
+                return lease;
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
+            }
         }
     }
 
@@ -83,10 +107,26 @@ internal sealed class ShellDownloadCache : IDisposable
     {
         try
         {
-            await _download(index, path, _stop.Token).ConfigureAwait(false);
-            if (new FileInfo(path).Length != expectedSize)
+            if (OperatingSystem.IsWindows())
             {
-                throw new IOException("The remote file changed size during the transfer.");
+                await _guard!.DownloadAsync(Path.GetFileName(path), expectedSize,
+                    (stream, ct) => _download(index, stream, ct), _stop.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                string partial = path + ".part";
+                try
+                {
+                    await using (FileStream file = new(partial, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                    {
+                        using var stream = new ShellStagingWriteStream(file, expectedSize, () => { });
+                        await _download(index, stream, _stop.Token).ConfigureAwait(false);
+                        if (file.Length != expectedSize) { throw new IOException("The downloaded file has an unexpected size."); }
+                        file.Flush(flushToDisk: true);
+                    }
+                    File.Move(partial, path, overwrite: false);
+                }
+                catch { File.Delete(partial); throw; }
             }
 
             return path;
@@ -105,7 +145,7 @@ internal sealed class ShellDownloadCache : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed) { return; }
+            if (_disposed) { CleanupIfFinished(); return; }
             _disposed = true;
         }
 
@@ -135,9 +175,37 @@ internal sealed class ShellDownloadCache : IDisposable
     private void CleanupIfFinished()
     {
         if (!_disposed || _downloads != 0 || _readers != 0 || _cleaned) { return; }
-        try { Directory.Delete(DirectoryPath, recursive: true); _cleaned = true; }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        try
+        {
+            if (OperatingSystem.IsWindows()) { _guard!.Delete(); }
+            else { Directory.Delete(DirectoryPath, recursive: true); }
+            _cleaned = true;
+            _cleanupFailure = null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _cleanupFailure = ex;
+            Heimdall.Core.Logging.FileLogger.Warn("Shell staging cleanup failed; temporary data may remain (" + ex.GetType().Name + ").");
+            if (OperatingSystem.IsWindows() && !_retryScheduled)
+            {
+                _retryScheduled = true;
+                CleanupRetries = RetryCleanupAsync();
+            }
+        }
+    }
+
+    private async Task RetryCleanupAsync()
+    {
+        foreach (int delay in new[] { 200, 500, 1500, 3000, 5000, 10000, 10000 })
+        {
+            await Task.Delay(delay).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (_cleaned) { break; }
+                CleanupIfFinished();
+            }
+        }
+        lock (_gate) { _retryScheduled = false; }
     }
 
     private sealed record Entry(long Size, Task<string> Download);

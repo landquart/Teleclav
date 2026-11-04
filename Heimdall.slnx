@@ -20,5 +20,6 @@
     <Project Path="tests/Heimdall.Terminal.Tests/Heimdall.Terminal.Tests.csproj" />
     <Project Path="tests/TwinShell.Infrastructure.Tests/TwinShell.Infrastructure.Tests.csproj" />
     <Project Path="tests/fixtures/Heimdall.UpdateStub/Heimdall.UpdateStub.csproj" />
+    <Project Path="tests/fixtures/Heimdall.StagingCrashStub/Heimdall.StagingCrashStub.csproj" />
   </Folder>
 </Solution>

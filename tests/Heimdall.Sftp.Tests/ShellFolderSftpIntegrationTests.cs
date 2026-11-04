@@ -49,6 +49,10 @@ public sealed class ShellFolderSftpIntegrationTests
                 {
                     await browser.DownloadFileWithinLimitAsync(item.RemotePath, target, item.Size);
                     Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(item.RemotePath)), SHA256.HashData(await File.ReadAllBytesAsync(target)));
+                    using var stream = new MemoryStream();
+                    await browser.DownloadToStreamWithinLimitAsync(item.RemotePath, stream, item.Size);
+                    Assert.True(stream.CanWrite); // The browser never owns the caller's destination.
+                    Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(target)), SHA256.HashData(stream.ToArray()));
                 }
             }
             Assert.True(Directory.Exists(Path.Combine(localRoot, "проект", "вложенная", "empty")));
