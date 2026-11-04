@@ -252,8 +252,12 @@ contents. The threat boundary and recovery limits are detailed in
 The matrix distinguishes automatic Windows coverage, genuine Ubuntu OpenSSH
 and scenarios that require an isolated interactive Windows desktop. The
 [F3.4 baseline](https://github.com/landquart/Teleclav/actions/runs/41725649233)
-ran on `3d6136d893c7a3c17f1b1af9b2c190b4f5fc2ee5`. The F3.5 run and
-measurement evidence are tracked on [PR #12](https://github.com/landquart/Teleclav/pull/12).
+ran on `3d6136d893c7a3c17f1b1af9b2c190b4f5fc2ee5`. The [F3.5 Windows staging
+run](https://github.com/landquart/Teleclav/actions/runs/41781366977/job/126413428450)
+passed all 176 cases on `0e8ee24faa34af9915ba7be061aac3c30de57d1c`. That run
+stopped at an import-order violation after the staging tests. The format
+correction does not change the tested application binaries. See
+[PR #12](https://github.com/landquart/Teleclav/pull/12) for CI on the final head.
 
 | Requirement | Implementation | Test | Result |
 | --- | --- | --- | --- |
@@ -261,15 +265,44 @@ measurement evidence are tracked on [PR #12](https://github.com/landquart/Telecl
 | A. Repeat and concurrent reads, completion, cancellation, repeat transfer | Shared cache task, independent streams and COM lease | Windows ShellDownloadCache, ShellReadStream, ShellAsyncLifetime and forced-crash suites, F3.4 baseline | PASS |
 | B. Create/write/publish/delete errors, missing data, access denial, locked files, journal damage | Exclusive create, bounded stream, no-replace rename, durable state and bounded retry | Windows protocol, deletion, ownership, cache and recovery suites, F3.4 baseline | PASS |
 | B. Disk-full handling on a real exhausted volume | Free-space preflight and owned partial cleanup | The protocol test injects Windows error 112. A disposable full NTFS volume is needed for physical exhaustion. | NOT TESTED |
-| C. Links, path/file replacement, reuse, ACL and identity mismatch, foreign data and a second volume | Pinned native handles, identity, ACL, EA, link count and exclusive cleanup | Windows deletion security suite with isolated outside controls, F3.4 baseline | PASS |
-| C. Read aliases with the same ID | Handle-relative guarded read | CacheRead_RefusesAliasesEvenWhenTheTargetHasTheRecordedIdentity | NOT TESTED |
-| D. Forced termination before/during creation, write, publication, read and cleanup | Flushed journal, EA and exclusive journal lease | ShellStagingForcedCrashTests with fresh scanners and subsequent transfers, F3.4 baseline | PASS |
-| D. Recovery interrupted mid-delete, live owners, competing scanners, external reader, repeated recovery | Per-file deletion records and exclusive recovery lease | Windows forced-crash, deletion-security and recovery suites, F3.4 baseline | PASS |
-| E. 100 and 1,000 sequential transfers, handles, memory, cleanup time and residue | Cache/guard lifecycle | RepeatedCaches_DoNotAccumulateDirectoriesOrHandles | NOT TESTED |
-| E. 64 MiB file, two retained readers, eight parallel transfers and recovery of 256 files | Reader leases and bounded recovery | ParallelLargeCacheReaders_RetainDataUntilTheLastRelease and Recovery_ManyOwnedEntriesReportsMeasuredCleanup | NOT TESTED |
+| C. Links, path/file replacement, reuse, ACL and identity mismatch, foreign data and a second volume | Pinned native handles, identity, ACL, EA, link count and exclusive cleanup | Windows deletion security suite with isolated outside controls, CI 78 | PASS |
+| C. Read aliases with the same ID | Handle-relative guarded read | CacheRead_RefusesAliasesEvenWhenTheTargetHasTheRecordedIdentity, CI 78 | PASS |
+| D. Forced termination before/during creation, write, publication, read and cleanup | Flushed journal, EA and exclusive journal lease | ShellStagingForcedCrashTests with fresh scanners and subsequent transfers, CI 78 | PASS |
+| D. Recovery interrupted mid-delete, live owners, competing scanners, external reader, repeated recovery | Per-file deletion records and exclusive recovery lease | Windows forced-crash, deletion-security and recovery suites, CI 78 | PASS |
+| E. 100 and 1,000 sequential transfers, handles, memory, cleanup time and residue | Cache/guard lifecycle | RepeatedCaches_DoNotAccumulateDirectoriesOrHandles, CI 78 | PASS |
+| E. 64 MiB file, two retained readers, eight parallel transfers and recovery of 256 files | Reader leases and bounded recovery | ParallelLargeCacheReaders_RetainDataUntilTheLastRelease and Recovery_ManyOwnedEntriesReportsMeasuredCleanup, CI 78 | PASS |
 | COM IStream, asynchronous release and tab-close lifecycle | ShellVirtualFileDrag, ShellReadStream, ShellAsyncLifetime, ShellDownloadCache | Windows App and informational desktop suites, F3.4 baseline | PASS |
 | Interactive Explorer Drop, multiple files/folders, cancellation, tab close and second Drop | Portable app with Explorer and SFTP | [Interactive acceptance procedure](DRAG_DROP_ACCEPTANCE.md) on Windows 11 | NOT TESTED |
-| Standard Ubuntu OpenSSH SFTP | Ordinary and bounded stream SFTP copy | Ubuntu OpenSSH integration against the real server, F3.4 baseline | PASS |
+| Standard Ubuntu OpenSSH SFTP | Ordinary and bounded stream SFTP copy | Ubuntu OpenSSH integration against the real server, CI 78 | PASS |
 | Complete repository regression | Required Windows, informational desktop/unstable and Ubuntu lanes | F3.4 exact-head CI, including App, Core, Sftp, Ssh and Terminal | PASS |
 | C# CRAP, duplication and mutation gates | ub-mode quality tools | Upstream Crapper, Dryer and Mutator have no C# support | BLOCKED |
 | Actual reboot, power loss and prolonged interactive Explorer ownership | Durable records and last-handle semantics | Requires an isolated interactive Windows machine and controlled reboot/power-loss setup | NOT TESTED |
+
+### Regression and load evidence
+
+[CI 77](https://github.com/landquart/Teleclav/actions/runs/41780571561/job/126410926346)
+on `2a7aa2bd3670009537201a57d373c8dd127a1aa5` reproduced both read-alias defects.
+The original cache accepted each alias and threw no IOException. Windows
+reported 171 passed and 2 failed. Both alias tests passed on CI 78. They compare
+SHA-256 and directory entries for isolated controls outside staging. Deletion
+and process-crash tests also preserve and verify their external control files.
+
+| Transfers | Total time | Cleanup total / max | Handles before / sampled peak / after | Private bytes before / sampled peak / after | Managed bytes before / after | Remaining directories |
+| ---: | ---: | ---: | --- | --- | --- | ---: |
+| 100 | 7,325.24 ms | 1,245.02 / 29.77 ms | 516 / 526 / 511 | 154,488,832 / 155,402,240 / 147,972,096 | 89,018,360 / 89,038,136 | 0 |
+| 1,000 | 119,848.53 ms | 23,206.04 / 1,769.53 ms | 520 / 530 / 513 | 140,644,352 / 160,813,056 / 155,447,296 | 89,117,000 / 89,188,048 | 0 |
+
+The CI 78 Debug runner measured 1,347.04 ms for the 64 MiB operation with two
+retained readers and eight concurrent transfers, and 1,840.24 ms to recover
+one abandoned 256-file operation. Both left zero operation directories. These
+are single-run process measurements. The peak is sampled with a reader open.
+The sequential totals include sample collection and cleanup, and the average
+is approximately 73 and 120 ms per transfer respectively. These values do not
+establish latency targets for other disks or hosts.
+
+The actual disk-exhaustion case needs a disposable fixed NTFS volume in a
+Windows VM. Exercise both insufficient space at admission and exhaustion during
+a write, compare SHA-256 and directory entries of controls on a separate
+volume, then free space and verify recovery on restart. Use the existing
+interactive acceptance procedure on Windows 11 with the exact-head Portable
+artifact to test Explorer, including cancellation and a repeated Drop.

@@ -234,3 +234,11 @@ Separate tests hold two readers of a 64 MiB file across eight concurrent
 transfers and time recovery of a 256-file operation. See the
 [F3.5 verification matrix](DRAG_DROP_SAFETY_AUDIT.md#f35-final-audit) for run
 evidence and manual test gaps.
+
+[Windows CI 78](https://github.com/landquart/Teleclav/actions/runs/41781366977/job/126413428450)
+passed all 34 forced-crash test cases, including the fresh scanner after a
+killed recovery process and a separate reader surviving its owner. Competing
+recovery processes and live-owner refusal also passed in the staging suite.
+A scanner's successful cleanup is checked against the expected directories
+and external controls. The tests do not depend on PIDs for ownership. A
+deterministically reused PID and an actual Windows reboot were not exercised.
