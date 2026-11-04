@@ -23,6 +23,7 @@ PermitRootLogin no
 UsePAM yes
 AllowUsers $user_name
 Subsystem sftp internal-sftp
+ForceCommand internal-sftp
 CONFIG
 sudo mkdir -p /run/sshd
 sudo /usr/sbin/sshd -t -f "$root/sshd_config"

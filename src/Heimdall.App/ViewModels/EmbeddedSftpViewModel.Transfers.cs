@@ -643,8 +643,6 @@ public sealed partial class EmbeddedSftpViewModel
                 detail = L10n("SftpTransferJobCancelled");
             }
 
-            UpdateStatus(L10n(outcome.Completed ? "SftpStatusTransferComplete" : "SftpStatusTransferCancelled"));
-
             if (outcome.Completed && outcome.SkippedUnsupportedTargets.Count > 0)
             {
                 foreach (string path in outcome.SkippedUnsupportedTargets)
@@ -680,6 +678,10 @@ public sealed partial class EmbeddedSftpViewModel
             {
                 status = SftpTransferJobStatus.Failed;
                 detail = string.Join(Environment.NewLine, pendingOperationWarnings);
+                if (_uploadBatchProgress.Uploaded > 0)
+                    detail = LFC(_uploadBatchProgress.Uploaded, "SftpErrorUploadFailedAfterOne",
+                        "SftpErrorUploadFailedAfter", _uploadBatchProgress.Uploaded,
+                        _uploadBatchProgress.Total, detail);
                 IEnumerable<string> refusedPaths = outcome.SkippedUnsupportedTargets
                     .Concat(outcome.SkippedLocalReparsePoints);
                 string refusedPathDetails = string.Join(Environment.NewLine, refusedPaths);
@@ -688,6 +690,13 @@ public sealed partial class EmbeddedSftpViewModel
                     detail += Environment.NewLine + refusedPathDetails;
                 }
             }
+            string verdict = string.Join(Environment.NewLine, pendingOperationWarnings);
+            finalReport = status switch
+            {
+                SftpTransferJobStatus.Completed => () => UpdateStatus(L10n("SftpStatusTransferComplete")),
+                SftpTransferJobStatus.Cancelled => () => UpdateStatus(L10n("SftpStatusTransferCancelled")),
+                _ => () => ShowOperationWarning(verdict),
+            };
         }
         catch (OperationCanceledException)
         {
@@ -712,28 +721,8 @@ public sealed partial class EmbeddedSftpViewModel
         {
             _progressTracker = null;
             IsTransferIndeterminate = false;
-            if (finalReport is not null)
-            {
-                // The refresh ends with "Ready" and used to run after the failure had been
-                // written, unawaited, so the message the user needed was wiped by the listing
-                // of a directory that now held part of their batch. The listing first, then
-                // the verdict, as the last message written.
-                await Refresh();
-                finalReport();
-            }
-            else if (refreshAfterTransfer)
-            {
-                await Refresh();
-                if (pendingOperationWarnings.Count == 0)
-                {
-                    UpdateStatus(L10n("SftpStatusTransferComplete"));
-                }
-            }
-        }
-
-        if (pendingOperationWarnings.Count > 0)
-        {
-            ShowOperationWarning(string.Join(Environment.NewLine, pendingOperationWarnings));
+            if (refreshAfterTransfer) { await Refresh(); }
+            finalReport?.Invoke();
         }
 
         return (status, detail);

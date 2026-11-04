@@ -66,7 +66,12 @@ public static class SftpAtomicUpload
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(finalRemotePath);
 
-        return $"{finalRemotePath}.{Guid.NewGuid():N}.part";
+        int separator = finalRemotePath.LastIndexOf('/');
+        const int maxLeafBytesWithSuffix = 255 - 38;
+        string prefix = System.Text.Encoding.UTF8.GetByteCount(finalRemotePath.AsSpan(separator + 1)) <= maxLeafBytesWithSuffix
+            ? finalRemotePath
+            : finalRemotePath[..(separator + 1)] + ".teleclav-upload";
+        return $"{prefix}.{Guid.NewGuid():N}.part";
     }
 
     // CommitPublishIfAbsent lived here. It published an uploaded temp path with a plain rename and

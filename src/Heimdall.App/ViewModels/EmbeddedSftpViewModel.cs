@@ -1358,21 +1358,10 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
     public Task UploadFilesAsync(IReadOnlyList<string> localPaths)
         => UploadEntriesAsync(localPaths, CurrentPath);
 
-    /// <summary>
-    /// Plans the dropped tree with <see cref="RemoteUploadTreePlanner"/> and executes the resulting
-    /// ordered operations against the (decorated, journaling) browser: <c>CreateDirectoryAsync</c> for
-    /// each directory and <c>UploadFileAsync</c> for each file, keeping the sudo permission fallback.
-    /// </summary>
-    /// <summary>
-    /// Enumerates the children of a local directory for the upload planner. The default is the
-    /// real filesystem walk, which is synchronous: the decision to leave the calling thread
-    /// belongs to the call site, not here, so that the offload stays in production code no
-    /// matter which enumerator is in use. Settable so a test can inject a gated or counting one.
-    /// </summary>
-    internal Func<string, ICollection<string>, CancellationToken, Task<IReadOnlyList<LocalUploadEntry>>>
+    /// <summary>Overrides child enumeration for gated planner tests.</summary>
+    internal Func<string, ICollection<string>, CancellationToken, Task<IReadOnlyList<LocalUploadEntry>>>?
         LocalChildEnumerator
-    { get; set; } = static (localDirectory, skippedLocalReparsePoints, _) => Task.FromResult(
-        EnumerateLocalChildren(localDirectory, skippedLocalReparsePoints));
+    { get; set; }
 
     /// <summary>
     /// Runs the upload planning and execution path with an explicit token, bypassing the
@@ -1403,64 +1392,108 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
                 skippedSources);
         }
 
-        List<LocalUploadEntry> roots = new(localPaths.Count);
-        foreach (string path in localPaths)
+        var snapshots = new Dictionary<string, LocalUploadSnapshot>(StringComparer.Ordinal);
+        LocalUploadSnapshot? TryCapture(string path, LocalUploadSnapshot? parent = null)
         {
-            bool isDirectory = Directory.Exists(path);
-            bool isFile = !isDirectory && File.Exists(path);
-            // Read attributes only for a path a probe reported present. A path both probes call
-            // absent is never uploaded, so its type cannot matter, while the probes swallow the
-            // access and malformed-path errors that the attribute read raises. Reading it
-            // unconditionally would let such a path abort the whole drop instead of being
-            // skipped on its own.
-            FileAttributes? attributes = isDirectory || isFile
-                ? ReadLocalRootAttributesOrNullIfMissing(path, File.GetAttributes)
-                : null;
-            int linkCount = skippedLocalReparsePoints.Count;
-            LocalUploadEntry? root = ClassifyLocalUploadRoot(
-                path,
-                isDirectory,
-                isFile,
-                attributes,
-                skippedLocalReparsePoints);
-            if (root is null)
+            try
             {
-                // A source can disappear or become inaccessible after the drop. Keep the
-                // remaining selection, but do not report the overall batch as successful.
-                // Reparse points have their own warning and must not be followed.
-                if (skippedLocalReparsePoints.Count == linkCount)
+                LocalUploadSnapshot snapshot = LocalUploadSnapshot.Capture(path, parent);
+                snapshots.TryAdd(path, snapshot);
+                return snapshot;
+            }
+            catch (LocalUploadReparseException) { skippedLocalReparsePoints.Add(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                skippedSources.Add(path);
+            }
+            return null;
+        }
+
+        // Plan on a worker. The Windows directory handle pins the verified parent while its
+        // children are discovered, and each child's snapshot must extend that same parent chain.
+        IReadOnlyList<RemoteUploadOp> ops = await Task.Run(async () =>
+        {
+            List<LocalUploadEntry> roots = new(localPaths.Count);
+            foreach (string path in localPaths)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (OperatingSystem.IsWindows())
                 {
-                    skippedSources.Add(path);
+                    LocalUploadSnapshot? snapshot = TryCapture(path);
+                    if (snapshot is not null)
+                        roots.Add(ToLocalUploadEntry(path, snapshot.IsDirectory));
+                    continue;
                 }
 
-                continue;
+                bool isDirectory = Directory.Exists(path);
+                bool isFile = !isDirectory && File.Exists(path);
+                // Read attributes only for a path a probe reported present. A path both probes call
+                // absent is never uploaded, so its type cannot matter, while the probes swallow the
+                // access and malformed-path errors that the attribute read raises. Reading it
+                // unconditionally would let such a path abort the whole drop instead of being
+                // skipped on its own.
+                FileAttributes? attributes = isDirectory || isFile
+                    ? ReadLocalRootAttributesOrNullIfMissing(path, File.GetAttributes)
+                    : null;
+                int linkCount = skippedLocalReparsePoints.Count;
+                LocalUploadEntry? root = ClassifyLocalUploadRoot(
+                    path,
+                    isDirectory,
+                    isFile,
+                    attributes,
+                    skippedLocalReparsePoints);
+                if (root is null)
+                {
+                    // A source can disappear or become inaccessible after the drop. Keep the
+                    // remaining selection, but do not report the overall batch as successful.
+                    // Reparse points have their own warning and must not be followed.
+                    if (skippedLocalReparsePoints.Count == linkCount)
+                    {
+                        skippedSources.Add(path);
+                    }
+
+                    continue;
+                }
+
+                roots.Add(root);
             }
 
-            roots.Add(root);
-        }
 
-        if (roots.Count == 0)
-        {
-            return new UploadPlanOutcome(
-                true,
-                skippedUnsupportedTargets,
-                skippedLocalReparsePoints,
-                skippedSources);
-        }
+            return await RemoteUploadTreePlanner.PlanAsync(roots, targetRemoteDir, async (directory, token) =>
+            {
+                snapshots.TryGetValue(directory, out LocalUploadSnapshot? parent);
+                if (parent is not null && LocalChildEnumerator is null)
+                {
+                    var entries = new List<LocalUploadEntry>();
+                    foreach (LocalUploadSnapshot child in parent.ReadChildren(
+                        skippedLocalReparsePoints, skippedSources, token))
+                    {
+                        snapshots.TryAdd(child.Path, child);
+                        entries.Add(ToLocalUploadEntry(child.Path, child.IsDirectory));
+                    }
+                    return entries;
+                }
 
-        // The tree walk is synchronous filesystem work and can be arbitrarily slow on a network
-        // share or a spun-down drive. Run it off the calling thread so it cannot hold the UI for
-        // its whole duration; the planner itself stays pure and offloads nothing.
-        IReadOnlyList<RemoteUploadOp> ops = await Task.Run(
-            () => RemoteUploadTreePlanner.PlanAsync(
-                roots,
-                targetRemoteDir,
-                (localDirectory, token) => LocalChildEnumerator(
-                    localDirectory,
-                    skippedLocalReparsePoints,
-                    token),
-                ct),
-            ct);
+                using IDisposable? pin = parent?.PinDirectory();
+                IReadOnlyList<LocalUploadEntry> children = LocalChildEnumerator is { } enumerate
+                    ? await enumerate(directory, skippedLocalReparsePoints, token)
+                    : EnumerateLocalChildren(directory, skippedLocalReparsePoints);
+                if (parent is null) { return children; }
+
+                var verified = new List<LocalUploadEntry>(children.Count);
+                foreach (LocalUploadEntry child in children)
+                {
+                    token.ThrowIfCancellationRequested();
+                    LocalUploadSnapshot? snapshot = TryCapture(child.FullPath, parent);
+                    if (snapshot is not null)
+                        verified.Add(child with { IsDirectory = snapshot.IsDirectory });
+                }
+                return verified;
+            }, ct);
+        }, ct);
+        if (ops.Count == 0)
+            return new UploadPlanOutcome(true, skippedUnsupportedTargets, skippedLocalReparsePoints, skippedSources);
+
         RemoteUploadConflictInventory inventory = await BuildRemoteUploadConflictInventoryAsync(
             _browser,
             ops,
@@ -1506,7 +1539,7 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             FileConflictDialogViewModel dialogViewModel = new(
                 conflicts,
                 _localizer,
-                item => DescribeUploadCollision(item, inventory));
+                item => DescribeUploadCollision(item, inventory, snapshots.GetValueOrDefault(item.SourceIdentity)));
             FileConflictDialogResult? dialogResult = await _fileConflictDialogPresenter
                 .ShowAsync(dialogViewModel);
             if (dialogResult is null)
@@ -1536,8 +1569,12 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
         _uploadBatchProgress = (0, totalFiles);
         TransferProgressTracker tracker = BeginBatchProgress(
             isUpload: true,
-            uploadSteps.Sum(step => LocalFileLengthOrZero(plannedOps[step.Index].LocalPath)),
+            uploadSteps.Sum(step => PlannedLength(plannedOps[step.Index].LocalPath)),
             totalFiles);
+
+        long PlannedLength(string path) => snapshots.TryGetValue(path, out LocalUploadSnapshot? source)
+            ? source.Length
+            : LocalFileLengthOrZero(path);
 
         foreach (FileConflictResolvedItem resolved in resolvedOps)
         {
@@ -1549,9 +1586,11 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             }
 
             RemoteUploadOp op = plannedOps[resolved.Index];
+            snapshots.TryGetValue(op.LocalPath, out LocalUploadSnapshot? source);
 
             if (op.Kind == RemoteUploadOpKind.MakeDirectory)
             {
+                using IDisposable? pin = source?.PinDirectory();
                 try
                 {
                     await _browser.CreateDirectoryAsync(resolved.EffectiveTargetPath, ct);
@@ -1563,7 +1602,16 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
                     // transports expose no typed already-exists error - SSH.NET raises SftpException
                     // with the generic message "Failure" - so consult the pre-transfer inventory:
                     // tolerate only a directory that was already known to exist.
-                    if (!inventory.DirectoryExists(resolved.EffectiveTargetPath))
+                    string target = resolved.EffectiveTargetPath;
+                    if (!inventory.DirectoryExists(target))
+                    {
+                        throw;
+                    }
+
+                    IReadOnlyList<SftpFileInfo> siblings = await _browser.ListDirectoryAsync(GetParentPath(target), ct);
+                    string name = target[(target.LastIndexOf('/') + 1)..];
+                    if (!siblings.Any(entry => entry.Kind == RemoteEntryKind.Directory &&
+                        inventory.PathComparer.Equals(entry.Name, name)))
                     {
                         throw;
                     }
@@ -1575,16 +1623,18 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
                 continue;
             }
 
-            uploadedFiles++;
             string fileName = Path.GetFileName(op.LocalPath);
-            tracker.BeginFile(fileName, LocalFileLengthOrZero(op.LocalPath));
+            tracker.BeginFile(fileName, PlannedLength(op.LocalPath));
             RenderBatchProgress(fileName);
 
             try
             {
-                await _browser.UploadFileAsync(op.LocalPath, resolved.EffectiveTargetPath, resolved.Overwrite, ct);
+                if (source is not null)
+                    await _browser.UploadFileAsync(op.LocalPath, resolved.EffectiveTargetPath, resolved.Overwrite, source, ct);
+                else
+                    await _browser.UploadFileAsync(op.LocalPath, resolved.EffectiveTargetPath, resolved.Overwrite, ct);
             }
-            catch (Exception ex) when (_sshParams is not null && IsPermissionDenied(ex))
+            catch (Exception ex) when (source is null && _sshParams is not null && IsPermissionDenied(ex))
             {
                 Core.Logging.FileLogger.Info(
                     $"EmbeddedSFTP upload permission denied, falling back to sudo for {fileName}");
@@ -1592,7 +1642,7 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
             }
 
             tracker.CompleteFile();
-            _uploadBatchProgress = (uploadedFiles, totalFiles);
+            _uploadBatchProgress = (++uploadedFiles, totalFiles);
             RenderBatchProgress(fileName);
         }
 
@@ -1619,12 +1669,20 @@ public sealed partial class EmbeddedSftpViewModel : ObservableObject
     /// <summary>The size and date of a local file against the remote file it would replace.</summary>
     private static FileConflictComparison? DescribeUploadCollision(
         FileConflictAnalysisItem item,
-        RemoteUploadConflictInventory inventory)
+        RemoteUploadConflictInventory inventory,
+        LocalUploadSnapshot? source)
     {
         if (item.PlannedKind != FileConflictItemKind.File
             || inventory.GetExistingFile(item.TargetPath) is not { } existing)
         {
             return null;
+        }
+
+        if (source is not null)
+        {
+            return new FileConflictComparison(
+                new FileConflictSideInfo(source.Length, source.LastWriteTimeUtc),
+                new FileConflictSideInfo(existing.Size, ToUtc(existing.LastModified)));
         }
 
         try

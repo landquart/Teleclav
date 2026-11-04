@@ -43,7 +43,7 @@ public sealed class SftpNoClobberGuardTests
     // own parameter, so these are the enum member names and nothing more.
     private const string PublishingMode = "PublishByExclusiveLink";
     private const string ReplacingMode = "ReplaceExisting";
-    private const int UploadCoreParameterCount = 5;
+    private const int UploadCoreParameterCount = 6;
     private const int UploadCoreCommitModeParameterIndex = 2;
     private const string HostKeyCatch = "catch (HostKeyRejectedException hostKeyRejected)";
     private const string TransportCatch = "catch (Exception ex) when (ex is Renci.SshNet.Common.SshException";
@@ -138,8 +138,9 @@ public sealed class SftpNoClobberGuardTests
             StringComparison.Ordinal);
 
         int localAccessIndex = upload.IndexOf(
-            "LocalUploadSource.GetRequiredRegularFile(",
+            "LocalUploadSnapshot.Capture(",
             StringComparison.Ordinal);
+        int portableAccessIndex = upload.IndexOf("OpenPortableUploadSource(", StringComparison.Ordinal);
         int tempPathIndex = upload.IndexOf("CreateRemoteTempPath(", StringComparison.Ordinal);
         int lockIndex = upload.IndexOf("_clientLock.WaitAsync(", StringComparison.Ordinal);
         int openIndex = upload.IndexOf("OpenTempExclusive:", StringComparison.Ordinal);
@@ -147,7 +148,8 @@ public sealed class SftpNoClobberGuardTests
             "EnsureReplacementPreservesMetadataAsync(",
             StringComparison.Ordinal);
 
-        Assert.True(guardIndex < localAccessIndex, "the guard must precede the local file access");
+        Assert.True(guardIndex < localAccessIndex, "the guard must precede the Windows file access");
+        Assert.True(guardIndex < portableAccessIndex, "the guard must precede the portable file access");
         Assert.True(guardIndex < preflightIndex, "the guard must precede the metadata preflight");
         Assert.True(guardIndex < tempPathIndex, "the guard must precede the staging path choice");
         Assert.True(guardIndex < lockIndex, "the guard must precede the client lock");
@@ -483,7 +485,7 @@ public sealed class SftpNoClobberGuardTests
 
         return (Task)method.Invoke(
             browser,
-            [localPath, remotePath, commitMode, CancellationToken.None, runner])!;
+            [localPath, remotePath, commitMode, CancellationToken.None, runner, null])!;
     }
 
     private static MethodInfo ResolvePrivateUploadCore()

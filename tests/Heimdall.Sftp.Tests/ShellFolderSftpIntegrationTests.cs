@@ -10,6 +10,93 @@ namespace Heimdall.Sftp.Tests;
 public sealed class ShellFolderSftpIntegrationTests
 {
     [LocalSftpFact]
+    public async Task UploadTree_NoClobberAndCancelledRetry_PreserveHashes()
+    {
+        const string host = "127.0.0.1";
+        int port = int.Parse(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PORT")!);
+        string root = Directory.CreateTempSubdirectory("teleclav-upload-integration-").FullName;
+        try
+        {
+            string source = Directory.CreateDirectory(Path.Combine(root, "проект")).FullName;
+            Directory.CreateDirectory(Path.Combine(source, "nested", "empty"));
+            string local = Path.Combine(source, "nested", "тест.bin");
+            byte[] bytes = RandomNumberGenerator.GetBytes(1024 * 1024);
+            await File.WriteAllBytesAsync(local, bytes);
+            string destination = Directory.CreateDirectory(Path.Combine(root, "destination")).FullName;
+
+            Task ConnectAsync(SftpBrowser client) => client.ConnectAsync(new SshConnectionParams
+            {
+                Host = host,
+                Port = port,
+                Username = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName,
+                KeyPath = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_KEY")!,
+            }, new HostKeyStore(), new PinnedFingerprintVerifier(host, port,
+                Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_HOST_KEY")!));
+
+            using var browser = new SftpBrowser();
+            await ConnectAsync(browser);
+
+            static LocalUploadEntry Entry(string path) => new(path, Path.GetFileName(path), Directory.Exists(path));
+            var plan = await RemoteUploadTreePlanner.PlanAsync([Entry(source)], destination,
+                (path, _) => Task.FromResult<IReadOnlyList<LocalUploadEntry>>(
+                    Directory.EnumerateFileSystemEntries(path).Select(Entry).ToArray()));
+            foreach (var op in plan)
+            {
+                if (op.Kind == RemoteUploadOpKind.MakeDirectory) { await browser.CreateDirectoryAsync(op.RemotePath); }
+                else { await browser.UploadFileAsync(op.LocalPath, op.RemotePath, overwrite: false); }
+            }
+            Assert.True(Directory.Exists(Path.Combine(destination, "проект", "nested", "empty")));
+            string uploaded = Path.Combine(destination, "проект", "nested", "тест.bin");
+            Assert.Equal(SHA256.HashData(bytes), SHA256.HashData(await File.ReadAllBytesAsync(uploaded)));
+            string different = Path.Combine(root, "different.bin");
+            await File.WriteAllBytesAsync(different, [1, 2, 3]);
+            await Assert.ThrowsAsync<RemoteDestinationExistsException>(
+                () => browser.UploadFileAsync(different, uploaded, overwrite: false));
+            Assert.Equal(SHA256.HashData(bytes), SHA256.HashData(await File.ReadAllBytesAsync(uploaded)));
+
+            string outside = Path.Combine(root, "must-not-appear");
+            string link = Path.Combine(destination, "dangling-link");
+            File.CreateSymbolicLink(link, outside);
+            await Assert.ThrowsAsync<RemoteDestinationExistsException>(
+                () => browser.UploadFileAsync(different, link, overwrite: false));
+            Assert.Equal(outside, new FileInfo(link).LinkTarget);
+            Assert.False(File.Exists(outside));
+
+            string retry = Path.Combine(destination, "retry.bin");
+            using var cancellation = new CancellationTokenSource();
+            void CancelAfterBytes(SftpTransferProgress progress)
+            {
+                if (progress.IsUpload) { cancellation.Cancel(); }
+            }
+            browser.TransferProgress += CancelAfterBytes;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => browser.UploadFileAsync(local, retry, overwrite: false, cancellation.Token));
+            browser.TransferProgress -= CancelAfterBytes;
+            Assert.False(File.Exists(retry));
+            // The legacy overload must also publish a new file on an SFTP-only account.
+            await browser.UploadFileAsync(local, retry);
+            Assert.Equal(SHA256.HashData(bytes), SHA256.HashData(await File.ReadAllBytesAsync(retry)));
+            using var contender = new SftpBrowser();
+            await ConnectAsync(contender);
+            string collision = Path.Combine(destination, "collision.bin");
+            async Task<bool> PublishAsync(SftpBrowser client, string path)
+            {
+                try { await client.UploadFileAsync(path, collision, overwrite: false); }
+                catch (RemoteDestinationExistsException) { return false; }
+                return true;
+            }
+
+            bool[] commits = await Task.WhenAll(PublishAsync(browser, local), PublishAsync(contender, different));
+            Assert.Single(commits, published => published);
+            string winner = commits[0] ? local : different;
+            Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(winner)),
+                SHA256.HashData(await File.ReadAllBytesAsync(collision)));
+            Assert.Empty(Directory.EnumerateFiles(destination, "*.part", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [LocalSftpFact]
     public async Task FolderPlanAndBoundedDownload_PreserveTreeAndHashes()
     {
         int port = int.Parse(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PORT")!);

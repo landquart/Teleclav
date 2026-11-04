@@ -108,6 +108,16 @@ public interface IRemoteBrowser : IDisposable
     Task UploadFileAsync(string localPath, string remotePath, bool overwrite, CancellationToken ct = default)
         => UploadFileAsync(localPath, remotePath, ct);
 
+    /// <summary>Uploads a Windows source captured at plan time.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    async Task UploadFileAsync(string localPath, string remotePath, bool overwrite,
+        LocalUploadSnapshot source, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        using IDisposable pinned = source.PinReadPath();
+        await UploadFileAsync(source.Path, remotePath, overwrite, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Creates a directory on the remote host.</summary>
     Task CreateDirectoryAsync(string path, CancellationToken ct = default);
 

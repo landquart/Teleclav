@@ -44,6 +44,25 @@ public sealed class SftpModePreservationTests
         Assert.Equal(FileAccess.Write, recorder.RequestedStagingFileAccess);
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)]
+    public void RunStagedUpload_LengthMismatchDoesNotCommit(int expectedLength)
+    {
+        StagedUploadRecorder recorder = new(serverAssignedMode: 0x1A4, targetMode: null);
+        using var source = new MisreportedLengthStream(expectedLength);
+
+        Assert.Throws<IOException>(() => SftpModePreservation.RunStagedUpload(
+            recorder.Operations, source, recorder.Progress.Add, CancellationToken.None));
+
+        Assert.DoesNotContain("Commit", recorder.Log);
+    }
+
+    private sealed class MisreportedLengthStream(int expectedLength) : MemoryStream([1, 2, 3])
+    {
+        public override long Length => expectedLength;
+    }
+
     // Exactly one open: a create-then-reopen pair would discard the handle that proved exclusivity
     // and re-resolve the path by name, so the reservation would say nothing about what the writes
     // landed in.
