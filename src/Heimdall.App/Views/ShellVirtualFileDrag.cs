@@ -65,8 +65,15 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
-    private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
+    private ShellDownloadCache CreateCache() => new(ResolveCacheLimit(Environment.GetEnvironmentVariable("TELECLAV_SHELL_CACHE_GIB")),
         (index, stream, ct) => _browser.DownloadToStreamWithinLimitAsync(_files[index].FullPath, stream, _files[index].Size, _files[index].LastModified, ct), _timeout);
+
+    internal static long ResolveCacheLimit(string? configured)
+    {
+        const long bytesPerGiB = 1024L * 1024 * 1024;
+        return int.TryParse(configured, out int gib) && gib is >= 1 and <= 1024
+            ? gib * bytesPerGiB : 16 * bytesPerGiB;
+    }
 
     private static TimeSpan TransferTimeout()
     {
