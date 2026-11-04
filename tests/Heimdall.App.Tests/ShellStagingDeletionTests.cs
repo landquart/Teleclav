@@ -1,5 +1,6 @@
 /* Copyright 2026. Licensed under the Apache License, Version 2.0. */
 using System.IO;
+using System.Security.Cryptography;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Heimdall.App.Views;
@@ -138,7 +139,8 @@ internal sealed class DeletionArea : IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Teleclav-controls-" + Guid.NewGuid().ToString("N"))).FullName;
     internal string Sentinel => Path.Combine(Controls, "sentinel.txt");
     internal DeletionArea() { File.WriteAllText(Sentinel, "outside staging: preserve"); }
-    internal void AssertSentinel() => Assert.Equal("outside staging: preserve", File.ReadAllText(Sentinel));
+    internal void AssertSentinel() => Assert.Equal(
+        SHA256.HashData("outside staging: preserve"u8), SHA256.HashData(File.ReadAllBytes(Sentinel)));
     public void Dispose()
     {
         try

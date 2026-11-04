@@ -49,19 +49,40 @@ internal sealed partial class ShellStagingGuard : IDisposable
         catch { Dispose(); throw; }
     }
 
+    internal FileStream OpenPublishedRead(string name)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeRequested, this);
+            const uint readDataAndEa = 0x09;
+            const uint shareRead = 1;
+            SafeFileHandle handle = OpenRelative(_directory!, name, false, false, false,
+                fileAccess: readDataAndEa, shareAccess: shareRead);
+            try
+            {
+                Verify(name, handle);
+                return new FileStream(handle, FileAccess.Read, 81920, isAsync: false);
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
+        }
+    }
+
     internal void Verify(string name, SafeFileHandle file)
     {
-        FileIdentity actual = Identity(file);
         lock (_gate)
         {
             if (_objects.TryGetValue(name, out OwnedFile? owned))
             {
-                if (owned.Stage != FileStage.Published || owned.Identity != actual)
-                    throw new IOException("Staging file is not durably published or its identity changed.");
+                if (owned.Stage != FileStage.Published || owned.Identity is null)
+                    throw new IOException("Staging file is not durably published.");
+                ValidateOwnedHandle(owned, file);
                 return;
             }
-            if (!_files.TryGetValue(name, out FileIdentity expected) || actual != expected)
-                throw new IOException("Staging file identity changed; reading refused.");
+            ValidateLegacy(name, file);
         }
     }
 
@@ -83,12 +104,15 @@ internal sealed partial class ShellStagingGuard : IDisposable
 
     private void ReleaseHandles()
     {
-        _journal?.Dispose();
-        _journal = null;
-        _directory?.Dispose();
-        _directory = null;
-        foreach (SafeFileHandle handle in _ancestors) { handle.Dispose(); }
-        _ancestors.Clear();
+        try { _journal?.Dispose(); }
+        finally
+        {
+            _journal = null;
+            _directory?.Dispose();
+            _directory = null;
+            foreach (SafeFileHandle handle in _ancestors) { handle.Dispose(); }
+            _ancestors.Clear();
+        }
     }
 
     private static SafeFileHandle Open(string path, uint access)
@@ -125,58 +149,6 @@ internal sealed partial class ShellStagingGuard : IDisposable
         var disposition = new FileDispositionInformation { DeleteFile = 1 };
         if (!SetFileInformationByHandle(handle, FileDispositionInfo, ref disposition, (uint)Marshal.SizeOf<FileDispositionInformation>()))
             throw new IOException("Unable to delete a verified staging object.", new Win32Exception(Marshal.GetLastWin32Error()));
-    }
-
-    private static SafeFileHandle CreateRelative(SafeFileHandle parent, string name, byte[] descriptor)
-    {
-        IntPtr nameBuffer = Marshal.StringToHGlobalUni(name);
-        IntPtr unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
-        GCHandle security = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
-        bool added = false;
-        try
-        {
-            parent.DangerousAddRef(ref added);
-        }
-        catch
-        {
-            security.Free();
-            Marshal.FreeHGlobal(unicodePointer);
-            Marshal.FreeHGlobal(nameBuffer);
-            throw;
-        }
-        try
-        {
-            var unicode = new UnicodeString
-            {
-                Length = checked((ushort)(name.Length * 2)),
-                MaximumLength = checked((ushort)((name.Length + 1) * 2)),
-                Buffer = nameBuffer,
-            };
-            Marshal.StructureToPtr(unicode, unicodePointer, false);
-            var attributes = new ObjectAttributes
-            {
-                Length = Marshal.SizeOf<ObjectAttributes>(),
-                RootDirectory = parent.DangerousGetHandle(),
-                ObjectName = unicodePointer,
-                Attributes = 0x40,
-                SecurityDescriptor = security.AddrOfPinnedObject(),
-            };
-            int status = NtCreateFile(out SafeFileHandle handle, DeleteAccess | ReadAttributes | ReadControl | 0x00100027,
-                ref attributes, out _, IntPtr.Zero, DirectoryAttribute, ShareReadWrite, 2, 0x21, IntPtr.Zero, 0);
-            if (status < 0)
-            {
-                handle?.Dispose();
-                throw new IOException("Unable to create staging directory safely.", new Win32Exception((int)RtlNtStatusToDosError(status)));
-            }
-            return handle;
-        }
-        finally
-        {
-            if (added) { parent.DangerousRelease(); }
-            security.Free();
-            Marshal.FreeHGlobal(unicodePointer);
-            Marshal.FreeHGlobal(nameBuffer);
-        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

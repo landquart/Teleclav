@@ -211,3 +211,65 @@ An empty unjournalled directory left after final journal unlink is intentionally
 6. Rechecked upstream Crapper, Dryer and Mutator README language support: C# remains unsupported, so these gates are **BLOCKED / NOT RUN**, with no CRAP, duplication or mutation metrics claimed. Full interactive Explorer acceptance remains unperformed.
 
 Microsoft contract references for the reused native operations: [NtQueryDirectoryFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntquerydirectoryfile) (handle-local cursor, ReturnSingleEntry, RestartScan) and [NtCreateFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntcreatefile) (relative RootDirectory names, FILE_OPEN, sharing, reparse flags). Compilation alone is not validation of these contracts; Windows acceptance exercises actual native calls.
+
+## F3.5: final audit
+
+### Handle and ownership review
+
+The cache now opens published files relative to the pinned operation directory with
+`FILE_OPEN_REPARSE_POINT`. The previous read path followed a symbolic link before
+comparing the file ID. Moving the original file outside staging and linking to it
+therefore preserved the expected ID. Adding a hard link likewise left the ID
+unchanged. The read path now requires Published, the recorded volume and file ID,
+a regular non-reparse file, one link, the protected ACL and the exact ownership EA.
+The returned stream owns the same handle that passed these checks. Independent
+readers share read access and omit write/delete sharing. Cache reader leases
+still defer cleanup until the final release.
+
+Operation-directory creation uses the same native open as the journal, data
+and ancestry paths. It uses exclusive `FILE_CREATE`, while private ancestor
+provisioning uses `FILE_OPEN_IF`. Creation-only security descriptors and optional
+EA buffers are pinned inside the cleanup scope, with the parent reference and
+native string buffers released on every exit. Journal disposal leaves any error
+visible while the directory and ancestor handles are released in a finally block.
+
+| Native contract reviewed | Use in F3.5 |
+| --- | --- |
+| [NtCreateFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntcreatefile), [OBJECT_ATTRIBUTES](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes), [UNICODE_STRING](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_unicode_string) | Single component in a byte-counted UTF-16 name relative to the retained root handle, synchronous I/O with SYNCHRONIZE, type constraint and no reparse traversal. |
+| [IO_STATUS_BLOCK](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_status_block), [RtlNtStatusToDosError](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-rtlntstatustodoserror) | Pointer-width status union and information. The NTSTATUS return is signed and native failures are converted to Win32 errors. Enumeration and EA reads check the returned byte count. |
+| [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew), [SECURITY_ATTRIBUTES](https://learn.microsoft.com/en-us/windows/win32/api/wtypesbase/ns-wtypesbase-security_attributes), [SafeFileHandle](https://learn.microsoft.com/en-us/dotnet/api/microsoft.win32.safehandles.safefilehandle) | The existing drive root open passes null security attributes for a noninheritable handle. Native creation uses the protected descriptor in OBJECT_ATTRIBUTES without OBJ_INHERIT. The managed handle retains the native handle during a call, including explicit retention for a raw parent pointer. |
+| [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle), [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info), [GetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo) | Checks attributes and link count, compares the volume plus 128-bit ID, reads the owner and DACL from the handle and frees the security descriptor with LocalFree. |
+| [ZwQueryEaFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwqueryeafile), [FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information), [NtQueryDirectoryFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntquerydirectoryfile) | Reads the exact creation EA with FILE_READ_EA, renames without replacement relative to the same operation directory and enumerates through the verified handle. |
+| [SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle), [FILE_DISPOSITION_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info) | Class 4 receives a one-byte BOOLEAN. Exclusive access and verification precede disposition, handle closure precedes the Deleted record, and the Win32 failure is captured immediately. |
+
+Recovery diagnostics log counts, limits and an exception type on root refusal.
+This path does not log remote paths, connection settings, credentials or file
+contents. The threat boundary and recovery limits are detailed in
+[STAGING_CRASH_RECOVERY.md](STAGING_CRASH_RECOVERY.md).
+
+### Verification matrix
+
+The matrix distinguishes automatic Windows coverage, genuine Ubuntu OpenSSH
+and scenarios that require an isolated interactive Windows desktop. The
+[F3.4 baseline](https://github.com/landquart/Teleclav/actions/runs/41725649233)
+ran on `3d6136d893c7a3c17f1b1af9b2c190b4f5fc2ee5`. The F3.5 run and
+measurement evidence are tracked on [PR #12](https://github.com/landquart/Teleclav/pull/12).
+
+| Requirement | Implementation | Test | Result |
+| --- | --- | --- | --- |
+| A. Single and multiple files, folders, nested/empty folders, Unicode | Virtual descriptors, folder planner, bounded download | Windows ShellVirtualFileDrag and ShellFolderPlanner suites, F3.4 baseline | PASS |
+| A. Repeat and concurrent reads, completion, cancellation, repeat transfer | Shared cache task, independent streams and COM lease | Windows ShellDownloadCache, ShellReadStream, ShellAsyncLifetime and forced-crash suites, F3.4 baseline | PASS |
+| B. Create/write/publish/delete errors, missing data, access denial, locked files, journal damage | Exclusive create, bounded stream, no-replace rename, durable state and bounded retry | Windows protocol, deletion, ownership, cache and recovery suites, F3.4 baseline | PASS |
+| B. Disk-full handling on a real exhausted volume | Free-space preflight and owned partial cleanup | The protocol test injects Windows error 112. A disposable full NTFS volume is needed for physical exhaustion. | NOT TESTED |
+| C. Links, path/file replacement, reuse, ACL and identity mismatch, foreign data and a second volume | Pinned native handles, identity, ACL, EA, link count and exclusive cleanup | Windows deletion security suite with isolated outside controls, F3.4 baseline | PASS |
+| C. Read aliases with the same ID | Handle-relative guarded read | CacheRead_RefusesAliasesEvenWhenTheTargetHasTheRecordedIdentity | NOT TESTED |
+| D. Forced termination before/during creation, write, publication, read and cleanup | Flushed journal, EA and exclusive journal lease | ShellStagingForcedCrashTests with fresh scanners and subsequent transfers, F3.4 baseline | PASS |
+| D. Recovery interrupted mid-delete, live owners, competing scanners, external reader, repeated recovery | Per-file deletion records and exclusive recovery lease | Windows forced-crash, deletion-security and recovery suites, F3.4 baseline | PASS |
+| E. 100 and 1,000 sequential transfers, handles, memory, cleanup time and residue | Cache/guard lifecycle | RepeatedCaches_DoNotAccumulateDirectoriesOrHandles | NOT TESTED |
+| E. 64 MiB file, two retained readers, eight parallel transfers and recovery of 256 files | Reader leases and bounded recovery | ParallelLargeCacheReaders_RetainDataUntilTheLastRelease and Recovery_ManyOwnedEntriesReportsMeasuredCleanup | NOT TESTED |
+| COM IStream, asynchronous release and tab-close lifecycle | ShellVirtualFileDrag, ShellReadStream, ShellAsyncLifetime, ShellDownloadCache | Windows App and informational desktop suites, F3.4 baseline | PASS |
+| Interactive Explorer Drop, multiple files/folders, cancellation, tab close and second Drop | Portable app with Explorer and SFTP | [Interactive acceptance procedure](DRAG_DROP_ACCEPTANCE.md) on Windows 11 | NOT TESTED |
+| Standard Ubuntu OpenSSH SFTP | Ordinary and bounded stream SFTP copy | Ubuntu OpenSSH integration against the real server, F3.4 baseline | PASS |
+| Complete repository regression | Required Windows, informational desktop/unstable and Ubuntu lanes | F3.4 exact-head CI, including App, Core, Sftp, Ssh and Terminal | PASS |
+| C# CRAP, duplication and mutation gates | ub-mode quality tools | Upstream Crapper, Dryer and Mutator have no C# support | BLOCKED |
+| Actual reboot, power loss and prolonged interactive Explorer ownership | Durable records and last-handle semantics | Requires an isolated interactive Windows machine and controlled reboot/power-loss setup | NOT TESTED |

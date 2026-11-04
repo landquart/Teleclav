@@ -87,8 +87,12 @@ public sealed class ShellStagingDeletionSecurityTests
             case "symlink": File.CreateSymbolicLink(original, area.Sentinel); break;
             case "junction": await Junction(original, area.Controls); break;
         }
+        string[] controls = Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray();
+        byte[] savedHash = SHA256.HashData(File.ReadAllBytes(saved));
         Assert.Throws<IOException>(guard.Delete);
-        Assert.Equal("hello", File.ReadAllText(saved));
+        Assert.Equal(controls, Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray());
+        Assert.Equal(savedHash, SHA256.HashData(File.ReadAllBytes(saved)));
+        if (replacement == "file") { Assert.Equal("foreign", File.ReadAllText(original)); }
         if (replacement == "directory") { Assert.Equal("foreign", File.ReadAllText(Path.Combine(original, "keep"))); }
         area.AssertSentinel();
     }
@@ -103,9 +107,12 @@ public sealed class ShellStagingDeletionSecurityTests
         string file = Path.Combine(guard.DirectoryPath, "0");
         string alias = Path.Combine(area.Controls, "alias");
         Assert.True(CreateHardLink(alias, file, IntPtr.Zero), "CreateHardLink failed: " + Marshal.GetLastWin32Error());
+        string[] controls = Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray();
+        byte[] aliasHash = SHA256.HashData(File.ReadAllBytes(alias));
         Assert.Throws<IOException>(guard.Delete);
+        Assert.Equal(controls, Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray());
         Assert.Equal("hello", File.ReadAllText(file));
-        Assert.Equal("hello", File.ReadAllText(alias));
+        Assert.Equal(aliasHash, SHA256.HashData(File.ReadAllBytes(alias)));
         File.Delete(alias);
         guard.Delete();
         area.AssertSentinel();
@@ -121,9 +128,9 @@ public sealed class ShellStagingDeletionSecurityTests
         string journal = Path.Combine(path, ShellStagingGuard.OwnershipName);
         string alias = Path.Combine(area.Controls, "journal-alias");
         Assert.True(CreateHardLink(alias, journal, IntPtr.Zero), "CreateHardLink failed: " + Marshal.GetLastWin32Error());
-        byte[] before = File.ReadAllBytes(alias);
+        byte[] before = SHA256.HashData(File.ReadAllBytes(alias));
         Assert.Throws<IOException>(() => { using var reopened = ShellStagingGuard.Reopen(path); });
-        Assert.Equal(before, File.ReadAllBytes(alias));
+        Assert.Equal(before, SHA256.HashData(File.ReadAllBytes(alias)));
         area.AssertSentinel();
     }
 

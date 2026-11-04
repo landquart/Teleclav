@@ -28,7 +28,7 @@ internal sealed partial class ShellStagingGuard
     {
         string root = Path.GetDirectoryName(_path) ?? throw new IOException("Missing staging root.");
         OpenTrustedRoot(root);
-        _directory = CreateRelative(_ancestors[^1], Path.GetFileName(_path), ShellStagingDirectory.CreateSecurityDescriptor());
+        _directory = OpenRelative(_ancestors[^1], Path.GetFileName(_path), true, false, true, deleteDirectory: true);
         RequirePrivateDirectory(_directory);
         Fault?.Invoke(ShellStagingPoint.AfterOperationDirectory);
         _journal = ShellStagingJournal.Create(_directory, Identity(_ancestors[^1]), Identity(_directory),
@@ -186,19 +186,25 @@ internal sealed partial class ShellStagingGuard
 
     private static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, bool create,
         bool writableDirectory, bool directory, bool journal = false, bool deleteDirectory = false,
-        byte[]? extendedAttributes = null, uint fileAccess = 0, bool exclusive = false)
+        byte[]? extendedAttributes = null, uint fileAccess = 0, bool exclusive = false, uint shareAccess = ShareReadWrite)
     {
         ValidateComponent(name);
-        IntPtr buffer = Marshal.StringToHGlobalUni(name);
-        IntPtr unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
-        byte[] descriptor = directory ? ShellStagingDirectory.CreateSecurityDescriptor()
-            : ShellStagingDirectory.CreateJournalSecurityDescriptor();
-        GCHandle security = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        IntPtr buffer = IntPtr.Zero;
+        IntPtr unicodePointer = IntPtr.Zero;
+        GCHandle security = default;
         GCHandle ea = default;
-        if (extendedAttributes is not null) { ea = GCHandle.Alloc(extendedAttributes, GCHandleType.Pinned); }
         bool added = false;
         try
         {
+            buffer = Marshal.StringToHGlobalUni(name);
+            unicodePointer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+            if (create)
+            {
+                byte[] descriptor = directory ? ShellStagingDirectory.CreateSecurityDescriptor()
+                    : ShellStagingDirectory.CreateJournalSecurityDescriptor();
+                security = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+            }
+            if (extendedAttributes is not null) { ea = GCHandle.Alloc(extendedAttributes, GCHandleType.Pinned); }
             // OBJECT_ATTRIBUTES stores a raw parent handle; explicitly retain its SafeHandle during the native call.
             parent.DangerousAddRef(ref added);
             var unicode = new UnicodeString
@@ -223,9 +229,9 @@ internal sealed partial class ShellStagingGuard
             access |= fileAccess;
             uint options = 0x200000u | 0x20u | (directory ? 1u : 0x40u);
             if (extendedAttributes is not null) { options |= 2; } // FILE_WRITE_THROUGH
-            uint disposition = journal || extendedAttributes is not null ? (create ? 2u : 1u) : (create ? 3u : 1u);
+            uint disposition = create ? (directory && !deleteDirectory ? 3u : 2u) : 1u;
             int status = NtCreateFile(out SafeFileHandle handle, access, ref attributes, out _, IntPtr.Zero,
-                directory ? DirectoryAttribute : 0x20u, journal || exclusive ? 0u : ShareReadWrite, disposition, options,
+                directory ? DirectoryAttribute : 0x20u, journal || exclusive ? 0u : shareAccess, disposition, options,
                 ea.IsAllocated ? ea.AddrOfPinnedObject() : IntPtr.Zero, (uint)(extendedAttributes?.Length ?? 0));
             if (status < 0)
             {
@@ -237,7 +243,7 @@ internal sealed partial class ShellStagingGuard
         finally
         {
             if (added) { parent.DangerousRelease(); }
-            security.Free();
+            if (security.IsAllocated) { security.Free(); }
             if (ea.IsAllocated) { ea.Free(); }
             Marshal.FreeHGlobal(unicodePointer);
             Marshal.FreeHGlobal(buffer);

@@ -217,3 +217,20 @@ do not support C#; no CRAP/duplication/mutation metrics are claimed.
 - [Handle-based directory enumeration](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntquerydirectoryfile)
 - [FILE_DISPOSITION_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info)
 - [TerminateProcess handle cleanup and I/O cancellation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)
+
+## F3.5 read and cleanup verification
+
+A published file is read only through the same handle used to verify it. The
+guard opens its basename relative to the pinned operation directory with no
+reparse traversal, then checks Published, the ownership EA, protected ACL,
+recorded volume and file ID, file type and exactly one link. Read handles share
+read access. Cleanup waits for cache reader leases and treats an incompatible
+external handle as a bounded retry or a retained operation.
+
+The Windows stress tests report total operation and cleanup time, process handle
+counts, private and managed memory and remaining operation directories after 100
+and 1,000 transfers. The samples during transfer are taken with the reader open.
+Separate tests hold two readers of a 64 MiB file across eight concurrent
+transfers and time recovery of a 256-file operation. See the
+[F3.5 verification matrix](DRAG_DROP_SAFETY_AUDIT.md#f35-final-audit) for run
+evidence and manual test gaps.

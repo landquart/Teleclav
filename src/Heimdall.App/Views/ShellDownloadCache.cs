@@ -85,13 +85,15 @@ internal sealed class ShellDownloadCache : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            FileStream file = new(savedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
-                81920, FileOptions.SequentialScan);
+            FileStream file = OperatingSystem.IsWindows()
+                ? _guard!.OpenPublishedRead(Path.GetFileName(savedPath))
+                : new FileStream(savedPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+                    81920, FileOptions.SequentialScan);
             try
             {
-                if (OperatingSystem.IsWindows()) { _guard!.Verify(Path.GetFileName(savedPath), file.SafeFileHandle); }
+                var lease = new Lease(file, ReleaseReader);
                 _readers++;
-                return new Lease(file, ReleaseReader);
+                return lease;
             }
             catch
             {
