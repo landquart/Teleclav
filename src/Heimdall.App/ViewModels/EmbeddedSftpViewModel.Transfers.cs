@@ -681,7 +681,8 @@ public sealed partial class EmbeddedSftpViewModel
                 if (_uploadBatchProgress.Uploaded > 0)
                     detail = LFC(_uploadBatchProgress.Uploaded, "SftpErrorUploadFailedAfterOne",
                         "SftpErrorUploadFailedAfter", _uploadBatchProgress.Uploaded,
-                        _uploadBatchProgress.Total, detail);
+                        _uploadBatchProgress.Total, string.Empty).TrimEnd()
+                        + Environment.NewLine + detail;
                 IEnumerable<string> refusedPaths = outcome.SkippedUnsupportedTargets
                     .Concat(outcome.SkippedLocalReparsePoints);
                 string refusedPathDetails = string.Join(Environment.NewLine, refusedPaths);

@@ -137,10 +137,8 @@ public sealed class SftpNoClobberGuardTests
             upload,
             StringComparison.Ordinal);
 
-        int localAccessIndex = upload.IndexOf(
-            "LocalUploadSnapshot.Capture(",
-            StringComparison.Ordinal);
-        int portableAccessIndex = upload.IndexOf("OpenPortableUploadSource(", StringComparison.Ordinal);
+        // The adjacent behavioral tests pass a missing file to both invalid mode/runner
+        // combinations. They require the guard's error before either source opener can run.
         int tempPathIndex = upload.IndexOf("CreateRemoteTempPath(", StringComparison.Ordinal);
         int lockIndex = upload.IndexOf("_clientLock.WaitAsync(", StringComparison.Ordinal);
         int openIndex = upload.IndexOf("OpenTempExclusive:", StringComparison.Ordinal);
@@ -148,8 +146,6 @@ public sealed class SftpNoClobberGuardTests
             "EnsureReplacementPreservesMetadataAsync(",
             StringComparison.Ordinal);
 
-        Assert.True(guardIndex < localAccessIndex, "the guard must precede the Windows file access");
-        Assert.True(guardIndex < portableAccessIndex, "the guard must precede the portable file access");
         Assert.True(guardIndex < preflightIndex, "the guard must precede the metadata preflight");
         Assert.True(guardIndex < tempPathIndex, "the guard must precede the staging path choice");
         Assert.True(guardIndex < lockIndex, "the guard must precede the client lock");
