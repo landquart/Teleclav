@@ -97,10 +97,18 @@ public sealed class ShellFolderSftpIntegrationTests
     }
 
     [LocalSftpFact]
-    public async Task FolderPlanAndBoundedDownload_PreserveTreeAndHashes()
+    public Task FolderPlanAndBoundedDownload_PreserveTreeAndHashes()
+        => VerifyFolderDownloadAsync(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName,
+            Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_KEY")!, null);
+
+    [LocalSftpPasswordFact]
+    public Task PasswordAuthentication_PreservesTreeAndHashes()
+        => VerifyFolderDownloadAsync(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PASSWORD_USER")!,
+            null, Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PASSWORD")!);
+
+    private static async Task VerifyFolderDownloadAsync(string user, string? key, string? password)
     {
         int port = int.Parse(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PORT")!);
-        string key = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_KEY")!;
         string fingerprint = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_HOST_KEY")!;
         string testRoot = Directory.CreateTempSubdirectory("teleclav-sftp-integration-").FullName;
         if (!OperatingSystem.IsWindows())
@@ -115,18 +123,20 @@ public sealed class ShellFolderSftpIntegrationTests
             RandomNumberGenerator.Fill(data);
             await File.WriteAllBytesAsync(Path.Combine(remoteRoot, "вложенная", "тест file.bin"), data);
             await File.WriteAllBytesAsync(Path.Combine(remoteRoot, "zero"), []);
+            await File.WriteAllTextAsync(Path.Combine(remoteRoot, "readme.txt"), "Teleclav SFTP");
             using var browser = new SftpBrowser();
             await browser.ConnectAsync(new SshConnectionParams
             {
                 Host = "127.0.0.1",
                 Port = port,
-                Username = Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName,
+                Username = user,
                 KeyPath = key,
+                Password = password,
             }, new HostKeyStore(), new PinnedFingerprintVerifier("127.0.0.1", port, fingerprint));
             var roots = await browser.ListDirectoryStrictAsync(testRoot);
             SftpFileInfo root = Assert.Single(roots, item => item.Name == "проект");
             var plan = await ShellFolderPlanner.PlanAsync([root], browser.ListDirectoryStrictAsync);
-            Assert.Equal(5, plan.Count);
+            Assert.Equal(6, plan.Count);
             Assert.Contains(plan, item => item.RelativePath == "проект/вложенная/empty" && item.Kind == RemoteDownloadOpKind.MakeDirectory);
             foreach (var item in plan)
             {
@@ -137,12 +147,31 @@ public sealed class ShellFolderSftpIntegrationTests
                     await browser.DownloadFileWithinLimitAsync(item.RemotePath, target, item.Size);
                     Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(item.RemotePath)), SHA256.HashData(await File.ReadAllBytesAsync(target)));
                     using var stream = new MemoryStream();
-                    await browser.DownloadToStreamWithinLimitAsync(item.RemotePath, stream, item.Size);
+                    await browser.DownloadToStreamWithinLimitAsync(item.RemotePath, stream, item.Size, item.LastModified, default);
                     Assert.True(stream.CanWrite); // The browser never owns the caller's destination.
                     Assert.Equal(SHA256.HashData(await File.ReadAllBytesAsync(target)), SHA256.HashData(stream.ToArray()));
                 }
             }
             Assert.True(Directory.Exists(Path.Combine(localRoot, "проект", "вложенная", "empty")));
+            var plannedText = Assert.Single(plan, item => item.RelativePath.EndsWith("/readme.txt", StringComparison.Ordinal));
+            await File.WriteAllTextAsync(plannedText.RemotePath, "Modified file");
+            File.SetLastWriteTimeUtc(plannedText.RemotePath, plannedText.LastModified.AddMinutes(1));
+            using var rejected = new MemoryStream();
+            await Assert.ThrowsAsync<IOException>(() => browser.DownloadToStreamWithinLimitAsync(
+                plannedText.RemotePath, rejected, plannedText.Size, plannedText.LastModified, default));
+            Assert.Equal(0, rejected.Length);
+
+            string nestedPath = Path.Combine(remoteRoot, "вложенная");
+            string movedPath = Path.Combine(testRoot, "moved");
+            Directory.Move(nestedPath, movedPath);
+            Directory.CreateSymbolicLink(nestedPath, movedPath);
+            var plannedBinary = Assert.Single(plan, item => item.RelativePath.EndsWith(".bin", StringComparison.Ordinal));
+            await Assert.ThrowsAsync<IOException>(() => browser.DownloadToStreamWithinLimitAsync(
+                plannedBinary.RemotePath, rejected, plannedBinary.Size, plannedBinary.LastModified, default));
+            Assert.Equal(0, rejected.Length);
+            Directory.Delete(nestedPath);
+            Directory.Move(movedPath, nestedPath);
+
             string oversized = Path.Combine(testRoot, "over-limit");
             await Assert.ThrowsAsync<IOException>(() => browser.DownloadFileWithinLimitAsync(
                 Path.Combine(remoteRoot, "вложенная", "тест file.bin"), oversized, 0));
@@ -161,7 +190,7 @@ public sealed class ShellFolderSftpIntegrationTests
     }
 }
 
-public sealed class LocalSftpFactAttribute : FactAttribute
+public class LocalSftpFactAttribute : FactAttribute
 {
     public LocalSftpFactAttribute()
     {
@@ -170,5 +199,15 @@ public sealed class LocalSftpFactAttribute : FactAttribute
             || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_KEY"))
             || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_HOST_KEY")))
             Skip = "Requires an isolated local OpenSSH server and explicitly pinned host key.";
+    }
+}
+
+public sealed class LocalSftpPasswordFactAttribute : LocalSftpFactAttribute
+{
+    public LocalSftpPasswordFactAttribute()
+    {
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PASSWORD_USER"))
+            || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_PASSWORD")))
+            Skip ??= "Requires the isolated OpenSSH password account.";
     }
 }

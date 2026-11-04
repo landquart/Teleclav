@@ -31,21 +31,14 @@ public sealed class ShellVirtualFileDescriptorTests
         Assert.Equal(5u, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(72 + 592, 4)));
     }
 
-    [Fact]
-    public void Create_CaseInsensitiveCollision_UsesDistinctName()
+    [Theory]
+    [InlineData("a.txt", "A.TXT")]
+    [InlineData("é.txt", "e\u0301.txt")]
+    [InlineData("same.txt", "same.txt")]
+    public void Create_ConflictingWindowsNames_AreRefused(string first, string second)
     {
-        byte[] data = ShellVirtualFileDescriptor.Create(
-            [Entry("a.txt", RemoteEntryKind.File, 1), Entry("A.TXT", RemoteEntryKind.File, 2)]);
-        Assert.StartsWith("A (2).TXT\0", Encoding.Unicode.GetString(data, 76 + 592, 520));
-    }
-
-    [Fact]
-    public void Create_DuplicateName_DoesNotTakeAnotherOriginalName()
-    {
-        byte[] data = ShellVirtualFileDescriptor.Create(
-            [Entry("a.txt", RemoteEntryKind.File, 1), Entry("A.TXT", RemoteEntryKind.File, 2), Entry("a (2).txt", RemoteEntryKind.File, 3)]);
-        Assert.StartsWith("A (3).TXT\0", Encoding.Unicode.GetString(data, 76 + 592, 520));
-        Assert.StartsWith("a (2).txt\0", Encoding.Unicode.GetString(data, 76 + (2 * 592), 520));
+        Assert.Throws<ArgumentException>(() => ShellVirtualFileDescriptor.Create(
+            [Entry(first, RemoteEntryKind.File, 1), Entry(second, RemoteEntryKind.File, 2)]));
     }
 
     [Fact]

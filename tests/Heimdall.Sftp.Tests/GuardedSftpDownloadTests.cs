@@ -132,6 +132,16 @@ public sealed class GuardedSftpDownloadTests
         Assert.True(input.Closed);
     }
 
+    [Fact]
+    public void Transfer_RefusesSameSizeFileModifiedSincePlanningBeforeOpening()
+    {
+        using MemoryStream output = new();
+        Assert.Throws<IOException>(() => GuardedSftpDownload.Copy("/a", 5, _ => FileInfo(seconds: 2),
+            _ => new MemoryStream("other"u8.ToArray()), output, CancellationToken.None,
+            plannedLastModified: DateTime.UnixEpoch.AddSeconds(1)));
+        Assert.Empty(output.ToArray());
+    }
+
     private sealed class CancellingStream(CancellationTokenSource stop) : MemoryStream("hello"u8.ToArray())
     {
         public bool Closed { get; private set; }

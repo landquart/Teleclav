@@ -22,7 +22,7 @@ internal static class ShellVirtualFileDescriptor
             throw new ArgumentException("At least one file is required.", nameof(entries));
         }
 
-        HashSet<string> reserved = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> used = new(StringComparer.OrdinalIgnoreCase);
         foreach (SftpFileInfo entry in entries)
         {
             if (entry is null || !CanCreate(entry))
@@ -30,35 +30,10 @@ internal static class ShellVirtualFileDescriptor
                 throw new ArgumentException("The selection contains an invalid file name or type.", nameof(entries));
             }
 
-            reserved.Add(entry.Name);
-        }
-
-        HashSet<string> used = new(StringComparer.OrdinalIgnoreCase);
-        string[] names = new string[entries.Count];
-        for (int i = 0; i < entries.Count; i++)
-        {
-            string name = entries[i].Name;
-            if (!used.Add(name))
+            if (!used.Add(entry.Name.Normalize(NormalizationForm.FormC)))
             {
-                int dot = name.LastIndexOf('.');
-                string stem = dot > 0 ? name[..dot] : name;
-                string extension = dot > 0 ? name[dot..] : string.Empty;
-                int suffix = 2;
-                string candidate;
-                do
-                {
-                    candidate = $"{stem} ({suffix++}){extension}";
-                    if (!WindowsFileName.IsSafeName(candidate))
-                    {
-                        throw new ArgumentException("A duplicate name cannot be safely disambiguated.", nameof(entries));
-                    }
-                }
-                while (reserved.Contains(candidate) || !used.Add(candidate));
-
-                name = candidate;
+                throw new ArgumentException("The selection contains conflicting Windows file names.", nameof(entries));
             }
-
-            names[i] = name;
         }
 
         // FILEGROUPDESCRIPTORW is a DWORD count followed by 592-byte descriptors.
@@ -72,7 +47,7 @@ internal static class ShellVirtualFileDescriptor
             BinaryPrimitives.WriteUInt32LittleEndian(descriptor[36..], 0x80);
             BinaryPrimitives.WriteUInt32LittleEndian(descriptor[64..], (uint)((ulong)entry.Size >> 32));
             BinaryPrimitives.WriteUInt32LittleEndian(descriptor[68..], (uint)entry.Size);
-            Encoding.Unicode.GetBytes(names[i], descriptor.Slice(72, 520));
+            Encoding.Unicode.GetBytes(entry.Name, descriptor.Slice(72, 520));
         }
 
         return data;

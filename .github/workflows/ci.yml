@@ -463,8 +463,8 @@ jobs:
           root = ET.parse('TestResults/OpenSSH/openssh.trx').getroot()
           ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
           tests = root.findall('.//t:UnitTestResult', ns)
-          if len(tests) != 2 or any(test.get('outcome') != 'Passed' for test in tests):
-              raise SystemExit('Expected exactly two passed OpenSSH tests; no skips are accepted.')
+          if len(tests) != 3 or any(test.get('outcome') != 'Passed' for test in tests):
+              raise SystemExit('Expected exactly three passed OpenSSH tests; no skips are accepted.')
           PY
       - name: Upload OpenSSH test results
         if: always()

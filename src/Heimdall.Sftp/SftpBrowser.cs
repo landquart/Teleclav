@@ -695,7 +695,16 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
     }
 
     /// <inheritdoc />
-    public async Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes, CancellationToken ct = default)
+    public Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes, CancellationToken ct = default)
+        => DownloadToStreamCoreAsync(remotePath, destination, maximumBytes, null, ct);
+
+    /// <inheritdoc />
+    public Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes,
+        DateTime plannedLastModified, CancellationToken ct)
+        => DownloadToStreamCoreAsync(remotePath, destination, maximumBytes, plannedLastModified, ct);
+
+    private async Task DownloadToStreamCoreAsync(string remotePath, Stream destination, long maximumBytes,
+        DateTime? plannedLastModified, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
         ArgumentNullException.ThrowIfNull(destination);
@@ -707,7 +716,7 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
             SftpClient client = GetConnectedClient();
             using LimitedWriteStream limit = new(destination, maximumBytes);
             await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
-                path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct), ct).ConfigureAwait(false);
+                path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct, plannedLastModified), ct).ConfigureAwait(false);
         }
         finally { _clientLock.Release(); }
     }

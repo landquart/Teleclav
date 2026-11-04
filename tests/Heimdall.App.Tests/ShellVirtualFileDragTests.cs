@@ -401,7 +401,8 @@ public sealed class ShellVirtualFileDragTests
                 throw new NotSupportedException();
             }
 
-            LastRemotePath = (string)args![0]!;
+            Assert.Equal(DateTime.UnixEpoch, Assert.IsType<DateTime>(args![3]));
+            LastRemotePath = (string)args[0]!;
             LastPath = Assert.IsType<ShellStagingWriteStream>(args[1]).FilePath;
             if (!ProvideContent)
             {
