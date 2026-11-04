@@ -84,6 +84,43 @@ public sealed class LocalUploadSourceTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SftpUpload_RefusesFileAndAncestorLinksBeforeContactingServer(bool ancestor)
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+
+        string directory = CreateTempDirectory();
+        try
+        {
+            string control = Directory.CreateDirectory(Path.Combine(directory, "control")).FullName;
+            string original = Path.Combine(control, "data.txt");
+            File.WriteAllText(original, "control");
+            string alias = Path.Combine(directory, "alias");
+            string source;
+            if (ancestor)
+            {
+                Directory.CreateSymbolicLink(alias, control);
+                source = Path.Combine(alias, "data.txt");
+            }
+            else
+            {
+                File.CreateSymbolicLink(alias, original);
+                source = alias;
+            }
+
+            using var browser = new SftpBrowser();
+            await Assert.ThrowsAnyAsync<IOException>(
+                () => browser.UploadFileAsync(source, "/tmp/unused", overwrite: false));
+            Assert.Equal("control", File.ReadAllText(original));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string CreateTempDirectory()
     {
         string directory = Path.Combine(
