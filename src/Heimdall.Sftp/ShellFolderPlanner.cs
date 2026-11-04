@@ -5,7 +5,7 @@ using System.Text;
 namespace Heimdall.Sftp;
 
 /// <summary>One item in the virtual Shell hierarchy, with a slash-separated relative path.</summary>
-public sealed record ShellFolderItem(RemoteDownloadOpKind Kind, string RemotePath, string RelativePath, long Size);
+public sealed record ShellFolderItem(RemoteDownloadOpKind Kind, string RemotePath, string RelativePath, long Size, DateTime LastModified = default);
 
 /// <summary>Plans a complete representable tree without following links or silently dropping entries.</summary>
 public static class ShellFolderPlanner
@@ -63,6 +63,6 @@ public static class ShellFolderPlanner
         if (plan.SkippedUnsafeNames.Count != 0)
             throw new IOException($"Unsafe or conflicting Windows name: {plan.SkippedUnsafeNames[0]}");
         return plan.Ops.Select(op => new ShellFolderItem(op.Kind, op.RemotePath,
-            op.LocalPath[(Root.Length + 1)..], op.Size)).ToArray();
+            op.LocalPath[(Root.Length + 1)..], op.Size, op.LastModified)).ToArray();
     }
 }

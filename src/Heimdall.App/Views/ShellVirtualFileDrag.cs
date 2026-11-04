@@ -59,14 +59,14 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         ArgumentNullException.ThrowIfNull(items);
         _files = items.Select(item => new SftpFileInfo(item.RelativePath, item.RemotePath,
             item.Kind == RemoteDownloadOpKind.MakeDirectory ? RemoteEntryKind.Directory : RemoteEntryKind.File,
-            item.Size, DateTime.UnixEpoch, "", "", "")).ToArray();
+            item.Size, item.LastModified, "", "", "")).ToArray();
         _descriptor = ShellVirtualFileDescriptor.CreateHierarchy(items);
         _cache = CreateCache();
         _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
     private ShellDownloadCache CreateCache() => new(16L * 1024 * 1024 * 1024,
-        (index, stream, ct) => _browser.DownloadToStreamWithinLimitAsync(_files[index].FullPath, stream, _files[index].Size, ct), _timeout);
+        (index, stream, ct) => _browser.DownloadToStreamWithinLimitAsync(_files[index].FullPath, stream, _files[index].Size, _files[index].LastModified, ct), _timeout);
 
     private static TimeSpan TransferTimeout()
     {

@@ -85,6 +85,11 @@ public interface IRemoteBrowser : IDisposable
     Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes, CancellationToken ct = default)
         => throw new NotSupportedException("The browser does not support bounded stream downloads.");
 
+    /// <summary>Downloads the file selected by the Shell plan, checking its recorded modification time.</summary>
+    Task DownloadToStreamWithinLimitAsync(string remotePath, Stream destination, long maximumBytes,
+        DateTime plannedLastModified, CancellationToken ct)
+        => throw new NotSupportedException("The browser does not support planned stream downloads.");
+
     /// <summary>Uploads a local file to a remote path.</summary>
     Task UploadFileAsync(string localPath, string remotePath, CancellationToken ct = default);
 

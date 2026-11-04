@@ -23,6 +23,15 @@ public sealed class ShellFolderPlannerTests
     }
 
     [Fact]
+    public async Task Plan_RejectsAComponentThatFitsTheDescriptorButExceedsNtfsLimit()
+    {
+        string name = new('x', 256);
+        var root = Item(name, "/" + name, RemoteEntryKind.File);
+        await Assert.ThrowsAsync<IOException>(() => ShellFolderPlanner.PlanAsync([root],
+            (_, _) => throw new InvalidOperationException("A file must not be listed.")));
+    }
+
+    [Fact]
     public async Task Plan_RejectsCaseAndNormalizationCollisions()
     {
         var root = Item("d", "/d", RemoteEntryKind.Directory);

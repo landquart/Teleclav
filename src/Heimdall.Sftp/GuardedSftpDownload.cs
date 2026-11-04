@@ -6,12 +6,14 @@ namespace Heimdall.Sftp;
 internal static class GuardedSftpDownload
 {
     internal static void Copy(string path, long expectedSize, Func<string, SftpFileInfo> stat,
-        Func<string, Stream> open, Stream output, CancellationToken ct)
+        Func<string, Stream> open, Stream output, CancellationToken ct, DateTime? plannedLastModified = null)
     {
         ct.ThrowIfCancellationRequested();
         SftpFileInfo initial = stat(path);
         if (!initial.IsRegularFile || initial.Size != expectedSize)
             throw new IOException("The remote source is not a regular file of the expected size.");
+        if (plannedLastModified is { } modified && initial.LastModified != modified)
+            throw new IOException("The remote file changed after it was selected.");
         EnsureSame(initial, stat(path));
         ct.ThrowIfCancellationRequested();
         using Stream input = open(path);

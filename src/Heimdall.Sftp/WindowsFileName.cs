@@ -8,7 +8,7 @@ public static class WindowsFileName
 {
     public static bool IsSafeName(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.Length >= 260 || name is "." or ".."
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 255 || name is "." or ".."
             || name.EndsWith(' ') || name.EndsWith('.')
             || name.Any(c => c < 32 || "<>:\"/\\|?*".Contains(c)))
         {
