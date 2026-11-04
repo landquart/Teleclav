@@ -1,4 +1,4 @@
-# F5 — Ubuntu to Windows Explorer
+# F5 - Ubuntu to Windows Explorer
 
 Explorer receives descriptors for the selected files or the strict recursive
 plan. The plan refuses links, special files, unsafe names and conflicting Windows
