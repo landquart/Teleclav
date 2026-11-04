@@ -242,3 +242,5 @@ recovery processes and live-owner refusal also passed in the staging suite.
 A scanner's successful cleanup is checked against the expected directories
 and external controls. The tests do not depend on PIDs for ownership. A
 deterministically reused PID and an actual Windows reboot were not exercised.
+
+The [F7 technical audit](TELECLAV_FINAL_TECHNICAL_AUDIT.md) tracks the current CI evidence and physical fault scenarios.

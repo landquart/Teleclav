@@ -63,3 +63,5 @@ cleanup after the operation and its readers finish. A higher quota requires
 sufficient disk space. Real transfers above 16 GiB remain unverified.
 
 Windows regression and full end-to-end before/after measurements are pending.
+
+The [F7 technical audit](TELECLAV_FINAL_TECHNICAL_AUDIT.md) links CI 86 and records the remaining throughput and Explorer checks.
