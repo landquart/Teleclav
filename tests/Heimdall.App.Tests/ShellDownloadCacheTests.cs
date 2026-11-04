@@ -331,6 +331,17 @@ public sealed class ShellDownloadCacheTests
         Assert.False(Directory.Exists(directory));
     }
 
+    [Theory]
+    [InlineData(null, 16)]
+    [InlineData("0", 16)]
+    [InlineData("1025", 16)]
+    [InlineData("32", 32)]
+    [InlineData("1024", 1024)]
+    public void CacheLimit_UsesBoundedGiBConfiguration(string? configured, int expectedGiB)
+    {
+        Assert.Equal(expectedGiB * 1024L * 1024 * 1024, ShellVirtualFileDrag.ResolveCacheLimit(configured));
+    }
+
     [Fact]
     public async Task Quota_RejectsBeforeDownload()
     {

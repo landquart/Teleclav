@@ -6,6 +6,8 @@ namespace Heimdall.Sftp;
 /// <summary>Checks whether a single file name can be represented safely on Windows.</summary>
 public static class WindowsFileName
 {
+    private static readonly UnicodeEncoding StrictUnicode = new(false, false, true);
+
     public static bool IsSafeName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 255 || name is "." or ".."
@@ -17,14 +19,15 @@ public static class WindowsFileName
 
         try
         {
-            _ = new UnicodeEncoding(false, false, true).GetByteCount(name);
+            _ = StrictUnicode.GetByteCount(name);
         }
         catch (EncoderFallbackException)
         {
             return false;
         }
 
-        string stem = name.Split('.')[0].TrimEnd(' ');
+        int dot = name.IndexOf('.');
+        ReadOnlySpan<char> stem = name.AsSpan(0, dot < 0 ? name.Length : dot).TrimEnd(' ');
         if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
