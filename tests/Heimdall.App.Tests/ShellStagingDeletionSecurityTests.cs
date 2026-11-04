@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using Heimdall.App.Views;
 using Microsoft.Win32.SafeHandles;
@@ -12,6 +13,46 @@ namespace Heimdall.App.Tests;
 
 public sealed class ShellStagingDeletionSecurityTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CacheRead_RefusesAliasesEvenWhenTheTargetHasTheRecordedIdentity(bool symbolic)
+    {
+        if (!OperatingSystem.IsWindows()) { return; }
+        using var area = new DeletionArea();
+        using var cache = new ShellDownloadCache(5, (_, stream, ct) => stream.WriteAsync("hello"u8.ToArray(), ct).AsTask());
+        using (Stream first = await cache.OpenAsync(0, 5, CancellationToken.None)) { Assert.Equal('h', first.ReadByte()); }
+        string file = Path.Combine(cache.DirectoryPath, "0");
+        string alias = Path.Combine(area.Controls, "alias");
+        if (symbolic)
+        {
+            File.Move(file, alias);
+            File.CreateSymbolicLink(file, alias);
+        }
+        else { Assert.True(CreateHardLink(alias, file, IntPtr.Zero), "CreateHardLink failed: " + Marshal.GetLastWin32Error()); }
+
+        string[] names = Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray();
+        byte[] hash = SHA256.HashData(File.ReadAllBytes(alias));
+        byte[] sentinel = SHA256.HashData(File.ReadAllBytes(area.Sentinel));
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(async () =>
+            {
+                using Stream unexpected = await cache.OpenAsync(0, 5, CancellationToken.None);
+            });
+            Assert.Equal(names, Directory.GetFileSystemEntries(area.Controls).Order(StringComparer.Ordinal).ToArray());
+            Assert.Equal(hash, SHA256.HashData(File.ReadAllBytes(alias)));
+            Assert.Equal(sentinel, SHA256.HashData(File.ReadAllBytes(area.Sentinel)));
+        }
+        finally
+        {
+            if (symbolic) { File.Delete(file); File.Move(alias, file); }
+            else { File.Delete(alias); }
+        }
+        cache.Dispose();
+        Assert.False(Directory.Exists(cache.DirectoryPath));
+    }
+
     [Fact]
     public void NativeLayouts_MatchTheWindowsHeaderContract()
     {
