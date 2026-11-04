@@ -1,6 +1,6 @@
-# Drag & Drop acceptance - D5 draft
+# Drag & Drop acceptance
 
-Status: **NOT TESTED end-to-end; not release-ready**. Date: 2026-10-30. All functional desktop rows below require Windows 11 x64, Explorer, and a dedicated Ubuntu OpenSSH SFTP account. No interactive Windows desktop or Ubuntu OpenSSH is available in this environment. Use only disposable test data, not secrets or irreplaceable files.
+Status: **NOT TESTED end-to-end; not release-ready**. Date: 2026-10-30. All functional desktop rows below require Windows 11 x64, Explorer, and a dedicated Ubuntu OpenSSH SFTP account. The current status and automated evidence are in the [final technical audit](TELECLAV_FINAL_TECHNICAL_AUDIT.md). Use only disposable test data, not secrets or irreplaceable files.
 
 ## Git inputs and CI
 
@@ -17,7 +17,7 @@ Status: **NOT TESTED end-to-end; not release-ready**. Date: 2026-10-30. All func
 
 D5 applies the reviewed patches of #2 and #3 to the #7 tree in a separate branch, without merging those PRs. The #2 and #3 changed-file sets do not intersect the D1-D4 changed-file set; D1-D4 intentionally overlap in their stacked Shell/SFTP files. No textual conflict arose when applying #2 and #3. No review submissions or inline review threads were returned for #2-#7 at inspection. The GitHub connector returned no PR workflow runs or commit statuses for their listed heads. This does not establish why CI did not run. See the file inventories below.
 
-The portable workflow is inherited from #2 and requests read-only contents permission, Windows `windows-2025-vs2026`, SDK 10, Release `win-x64` self-contained .NET publish, ZIP and SHA-256 as a 14-day Actions artifact. It uses no publication secret or paid signing. Workflow execution and Windows launch are **NOT TESTED**. WebView2 Evergreen Runtime is still required separately. A Linux cross-publish uses a non-locked restore due Linux RID and is not proof of the Windows workflow.
+The portable workflow is inherited from #2 and requests read-only contents permission, Windows `windows-2025-vs2026`, SDK 10, Release `win-x64` self-contained .NET publish, ZIP and SHA-256 as a 14-day Actions artifact. It uses no publication secret or paid signing. The F6 workflow published and launched its extracted ZIP in CI 86. WebView2 Evergreen Runtime is still required separately. A Linux cross-publish uses a non-locked restore due Linux RID and is not proof of the Windows workflow.
 
 ## Functional matrix
 
@@ -46,7 +46,7 @@ python3 scripts/drag_drop_fixture.py create /tmp/teleclav-fixture --large-mib 12
 python3 scripts/drag_drop_fixture.py manifest /tmp/teleclav-fixture /tmp/teleclav-expected.json
 ```
 
-It creates regular text and binary files, a zero-byte file, Unicode names, nested and empty directories and a reproducible 128 MiB binary file. Use `--large-mib 4097` for a file larger than 4 GiB, only if both sides have enough space; the D4 cache has a 16 GiB limit. Copy the expected JSON separately to Windows. After dragging the fixture to an empty Windows target, run in Windows PowerShell from the extracted test-tools directory:
+It creates regular text and binary files, a zero-byte file, Unicode names, nested and empty directories and a reproducible 128 MiB binary file. Use `--large-mib 4097` for a file larger than 4 GiB, only if both sides have enough space; the cache defaults to 16 GiB and supports the TELECLAV_SHELL_CACHE_GIB setting. Copy the expected JSON separately to Windows. After dragging the fixture to an empty Windows target, run in Windows PowerShell from the extracted test-tools directory:
 
 ```powershell
 .\Compare-DragDropManifest.ps1 -Root 'C:\path\teleclav-fixture' -Manifest 'C:\path\teleclav-expected.json'

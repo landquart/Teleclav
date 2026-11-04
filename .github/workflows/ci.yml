@@ -270,11 +270,24 @@ jobs:
           New-Item -ItemType Directory -Path artifacts/portable/test-tools | Out-Null
           Copy-Item scripts/drag_drop_fixture.py,scripts/Compare-DragDropManifest.ps1,docs/DRAG_DROP_ACCEPTANCE.md artifacts/portable/test-tools/
           Compress-Archive -Path artifacts/portable/* -DestinationPath artifacts/Teleclav-portable-win-x64.zip
-          (Get-FileHash artifacts/Teleclav-portable-win-x64.zip -Algorithm SHA256).Hash |
-            Set-Content artifacts/Teleclav-portable-win-x64.sha256
+          $hash = (Get-FileHash artifacts/Teleclav-portable-win-x64.zip -Algorithm SHA256).Hash
+          Set-Content -Path artifacts/Teleclav-portable-win-x64.sha256 -Value $hash
+          "Portable ZIP SHA-256: $hash" | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Verify portable ZIP contents
         run: python scripts/check_portable_archive.py artifacts/Teleclav-portable-win-x64.zip
+
+      - name: Verify the packaged Drag and Drop fixture tools
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'teleclav-acceptance-fixture'
+          $manifest = Join-Path $env:RUNNER_TEMP 'teleclav-acceptance-manifest.json'
+          $tools = 'artifacts/portable/test-tools'
+          python "$tools/drag_drop_fixture.py" create $fixture --large-mib 1
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture generation failed.' }
+          python "$tools/drag_drop_fixture.py" manifest $fixture $manifest
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture manifest generation failed.' }
+          & "$tools/Compare-DragDropManifest.ps1" -Root $fixture -Manifest $manifest
 
       - name: Launch the extracted portable application
         shell: pwsh

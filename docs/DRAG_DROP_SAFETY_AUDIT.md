@@ -306,3 +306,5 @@ a write, compare SHA-256 and directory entries of controls on a separate
 volume, then free space and verify recovery on restart. Use the existing
 interactive acceptance procedure on Windows 11 with the exact-head Portable
 artifact to test Explorer, including cancellation and a repeated Drop.
+
+The [F7 technical audit](TELECLAV_FINAL_TECHNICAL_AUDIT.md) separates CI evidence from interactive acceptance.
