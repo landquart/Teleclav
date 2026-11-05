@@ -239,7 +239,7 @@ jobs:
           $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vs) { throw 'MSVC x64 tools are required.' }
           $consumer = Join-Path $env:RUNNER_TEMP 'ShellComConsumer.exe'
-          $command = '"' + $vs + '\Common7\Tools\VsDevCmd.bat" -arch=x64 && cl /nologo /EHsc /W4 tests\native\ShellComConsumer.cpp /Fe:"' + $consumer + '"'
+          $command = '"' + $vs + '\Common7\Tools\VsDevCmd.bat" -arch=x64 && cl /nologo /std:c++17 /EHsc /W4 tests\native\ShellComConsumer.cpp /Fe:"' + $consumer + '"'
           cmd /c $command
           if ($LASTEXITCODE -ne 0) { throw 'Native COM consumer build failed.' }
           "TELECLAV_NATIVE_COM_CONSUMER=$consumer" | Add-Content $env:GITHUB_ENV
