@@ -1,4 +1,5 @@
 /* Copyright 2026. Licensed under the Apache License, Version 2.0. */
+using System.Diagnostics;
 using System.IO;
 
 namespace Heimdall.App.Views;
@@ -14,6 +15,7 @@ internal sealed class ShellDownloadCache : IDisposable
     private readonly TimeSpan _waitLimit;
     private readonly ShellStagingGuard? _guard;
     private long _reserved;
+    private long _lastProgress = Stopwatch.GetTimestamp();
     private int _readers;
     private int _downloads;
     private bool _disposed;
@@ -61,6 +63,7 @@ internal sealed class ShellDownloadCache : IDisposable
                 }
 
                 if (OperatingSystem.IsWindows()) { _guard!.EnsureAvailableSpace(size); }
+                Interlocked.Exchange(ref _lastProgress, Stopwatch.GetTimestamp());
                 _reserved += size;
                 _downloads++;
                 string path = Path.Combine(DirectoryPath, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -75,10 +78,10 @@ internal sealed class ShellDownloadCache : IDisposable
 
         using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
         string savedPath;
-        try { savedPath = await entry.Download.WaitAsync(_waitLimit, waitCancellation.Token).ConfigureAwait(false); }
+        try { savedPath = await WaitForDownloadAsync(entry.Download, waitCancellation.Token).ConfigureAwait(false); }
         catch (TimeoutException)
         {
-            Heimdall.Core.Logging.FileLogger.Warn("A Shell download exceeded its wait limit; cancellation was requested.");
+            Heimdall.Core.Logging.FileLogger.Warn("A Shell download exceeded its inactivity limit; cancellation was requested.");
             Dispose();
             throw;
         }
@@ -103,6 +106,27 @@ internal sealed class ShellDownloadCache : IDisposable
         }
     }
 
+    private async Task<string> WaitForDownloadAsync(Task<string> download, CancellationToken ct)
+    {
+        while (!download.IsCompleted)
+        {
+            TimeSpan idle = Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress));
+            TimeSpan remaining = _waitLimit - idle;
+            if (remaining <= TimeSpan.Zero) { throw new TimeoutException("Shell staging made no progress within its inactivity limit."); }
+            try { return await download.WaitAsync(remaining, ct).ConfigureAwait(false); }
+            catch (TimeoutException) when (!download.IsCompleted
+                && Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress)) < _waitLimit) { }
+        }
+        return await download.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    private Task DownloadWithProgressAsync(int index, Stream stream, CancellationToken ct)
+    {
+        ((ShellStagingWriteStream)stream).Progress =
+            () => Interlocked.Exchange(ref _lastProgress, Stopwatch.GetTimestamp());
+        return _download(index, stream, ct);
+    }
+
     private async Task<string> DownloadAsync(int index, string path, long expectedSize)
     {
         try
@@ -110,7 +134,7 @@ internal sealed class ShellDownloadCache : IDisposable
             if (OperatingSystem.IsWindows())
             {
                 await _guard!.DownloadAsync(Path.GetFileName(path), expectedSize,
-                    (stream, ct) => _download(index, stream, ct), _stop.Token).ConfigureAwait(false);
+                    (stream, ct) => DownloadWithProgressAsync(index, stream, ct), _stop.Token).ConfigureAwait(false);
             }
             else
             {
@@ -120,7 +144,7 @@ internal sealed class ShellDownloadCache : IDisposable
                     await using (FileStream file = new(partial, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                     {
                         using var stream = new ShellStagingWriteStream(file, expectedSize, () => { });
-                        await _download(index, stream, _stop.Token).ConfigureAwait(false);
+                        await DownloadWithProgressAsync(index, stream, _stop.Token).ConfigureAwait(false);
                         if (file.Length != expectedSize) { throw new IOException("The downloaded file has an unexpected size."); }
                         file.Flush(flushToDisk: true);
                     }

@@ -247,7 +247,7 @@ jobs:
       - name: Test native cross-process Shell COM
         run: >
           dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-build --no-restore
-          --filter "FullyQualifiedName~ShellCrossProcessTests|FullyQualifiedName~Read_FillsTheRequestAcrossShortUnderlyingReads"
+          --filter "FullyQualifiedName~ShellCrossProcessTests|FullyQualifiedName~Read_FillsTheRequestAcrossShortUnderlyingReads|FullyQualifiedName~ShellDeferredStreamTests|FullyQualifiedName~ShellTransferRegistryTests|FullyQualifiedName~Progress_KeepsActiveTransferAliveBeyondIdleLimit"
           --logger "console;verbosity=detailed"
 
       - name: Test Windows staging ownership

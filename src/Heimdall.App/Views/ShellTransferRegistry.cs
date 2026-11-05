@@ -35,7 +35,7 @@ internal sealed class ShellTransferRegistry
         foreach (Action cancel in actions)
         {
             try { cancel(); }
-            catch (AggregateException)
+            catch (Exception)
             {
                 // A cancellation callback failed; continue cancelling the other transfers.
                 Heimdall.Core.Logging.FileLogger.Warn("A Shell transfer cancellation callback failed.");

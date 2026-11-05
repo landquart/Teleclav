@@ -30,7 +30,7 @@ namespace Heimdall.Sftp;
 /// <see cref="CancellationToken"/> is honoured at operation boundaries and by
 /// cancellation-aware file streams during transfers.
 /// </remarks>
-public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRemoteNoClobberCapability
+public sealed partial class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRemoteNoClobberCapability
 {
     /// <inheritdoc/>
     /// <remarks>
@@ -499,6 +499,8 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         // Retain the resolved params + pinned verifier for later trusted SSH exec channels.
         _connectionParams = connectionParams;
         _pinnedHostKeyVerifier = pinnedVerifier;
+        StopTransfers(Interlocked.Exchange(ref _transferContext,
+            new TransferContext(client, connectionParams, pinnedVerifier)));
 
         client.ErrorOccurred += OnErrorOccurred;
 
@@ -710,15 +712,21 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
         if (!destination.CanWrite) { throw new ArgumentException("The destination is not writable.", nameof(destination)); }
-        await _clientLock.WaitAsync(ct).ConfigureAwait(false);
+        await using TransferLease transfer = await OpenTransferAsync(ct).ConfigureAwait(false);
+        ct = transfer.Token;
         try
         {
-            SftpClient client = GetConnectedClient();
+            SftpClient client = transfer.Connection.Client;
             using LimitedWriteStream limit = new(destination, maximumBytes);
             await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
                 path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct, plannedLastModified), ct).ConfigureAwait(false);
         }
-        finally { _clientLock.Release(); }
+        catch (Exception)
+        {
+            transfer.Failed = true;
+            if (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
+            throw;
+        }
     }
 
     private static SftpFileInfo GetGuardedFileInfo(SftpClient client, string path, CancellationToken ct)
@@ -756,10 +764,11 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         long totalBytes = 0;
         string tempPath = AtomicLocalFile.CreateTempPath(localPath);
 
-        await _clientLock.WaitAsync(ct).ConfigureAwait(false);
+        await using TransferLease transfer = await OpenTransferAsync(ct).ConfigureAwait(false);
+        ct = transfer.Token;
         try
         {
-            var client = GetConnectedClient();
+            var client = transfer.Connection.Client;
             // Retrieve file size for progress reporting
             await Task.Run(() =>
             {
@@ -809,9 +818,11 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                 throw;
             }
         }
-        finally
+        catch (Exception)
         {
-            _clientLock.Release();
+            transfer.Failed = true;
+            if (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
+            throw;
         }
     }
 
@@ -918,10 +929,11 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
         // by name can never remove a staging file this upload did not create.
         bool stagingOwned = false;
 
-        await _clientLock.WaitAsync(ct).ConfigureAwait(false);
+        await using TransferLease transfer = await OpenTransferAsync(ct).ConfigureAwait(false);
+        ct = transfer.Token;
         try
         {
-            SftpClient client = GetConnectedClient();
+            SftpClient client = transfer.Connection.Client;
             try
             {
                 using CancellationAwareStream inputStream = new(fileStream, ct);
@@ -1121,9 +1133,11 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
                 throw;
             }
         }
-        finally
+        catch (Exception)
         {
-            _clientLock.Release();
+            transfer.Failed = true;
+            if (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
+            throw;
         }
     }
 
@@ -1712,6 +1726,7 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
 
     private void DropConnectionContext()
     {
+        StopTransfers(Interlocked.Exchange(ref _transferContext, null));
         Interlocked.Exchange(ref _connectionParams, null);
         Interlocked.Exchange(ref _pinnedHostKeyVerifier, null);
     }
@@ -1925,6 +1940,7 @@ public sealed class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublisher, IRe
 
     private void OnErrorOccurred(object? sender, Renci.SshNet.Common.ExceptionEventArgs e)
     {
+        StopTransfers(Interlocked.Exchange(ref _transferContext, null));
         SshSessionFailureDispatcher.Dispatch(
             e.Exception,
             SecurityEventOccurred,

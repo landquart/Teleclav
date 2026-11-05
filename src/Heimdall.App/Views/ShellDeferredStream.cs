@@ -12,10 +12,14 @@ internal sealed class ShellDeferredStream : Stream
     private readonly Action<Exception> _failure;
     private readonly Action _release;
     private int _disposed;
+    private readonly Func<bool>? _enter;
+    private readonly Action? _exit;
 
     internal ShellDeferredStream(Func<CancellationToken, Task<Stream>> open, long length,
-        Action<Exception> failure, Action release)
+        Action<Exception> failure, Action release, Func<bool>? enter = null, Action? exit = null)
     {
+        _enter = enter;
+        _exit = exit;
         _length = length;
         _failure = failure;
         _release = release;
@@ -33,12 +37,14 @@ internal sealed class ShellDeferredStream : Stream
         get
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            try { return _open.GetAwaiter().GetResult(); }
+            if (_enter is not null && !_enter()) { throw new OperationCanceledException(); }
+            try { return _open.WaitAsync(_stop.Token).GetAwaiter().GetResult(); }
             catch (Exception ex)
             {
                 _failure(ex);
                 throw ShellTransferFailure.ToComException(ex);
             }
+            finally { _exit?.Invoke(); }
         }
     }
 
