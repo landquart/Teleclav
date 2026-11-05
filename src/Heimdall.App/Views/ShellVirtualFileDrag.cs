@@ -53,12 +53,12 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
         _lifetime = new ShellAsyncLifetime(Cleanup, _comIdleTimeout);
     }
 
-    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items, TimeSpan? timeout = null)
+    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items, TimeSpan? timeout = null, TimeSpan? comIdleTimeout = null)
     {
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
         ArgumentNullException.ThrowIfNull(items);
         _timeout = timeout ?? _timeout;
-        _comIdleTimeout = timeout ?? _comIdleTimeout;
+        _comIdleTimeout = comIdleTimeout ?? timeout ?? _comIdleTimeout;
         _files = items.Select(item => new SftpFileInfo(item.RelativePath, item.RemotePath,
             item.Kind == RemoteDownloadOpKind.MakeDirectory ? RemoteEntryKind.Directory : RemoteEntryKind.File,
             item.Size, item.LastModified, "", "", "")).ToArray();

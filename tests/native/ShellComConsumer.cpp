@@ -220,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
             Check(data->QueryInterface(__uuidof(AsyncCapability), reinterpret_cast<void**>(&async)) == S_OK);
             BOOL active = FALSE;
             Check(async->SetAsyncMode(mode == L"sync" ? FALSE : TRUE) == S_OK);
-            Check(async->GetAsyncMode(&active) == S_OK && active == (mode != L"sync"));
+            Check(async->GetAsyncMode(&active) == S_OK && (active != FALSE) == (mode != L"sync"));
             if (mode != L"sync") {
                 Check(async->StartOperation(nullptr) == S_OK);
                 Check(FAILED(async->StartOperation(nullptr)));
@@ -243,8 +243,8 @@ int wmain(int argc, wchar_t** argv) {
                 Check(data->GetData(&content, &medium) == S_OK);
                 auto request = std::filesystem::path(std::wstring(argv[1]) + L".cancel");
                 std::thread cancel([request] { Sleep(200); std::ofstream(request).close(); });
-                char bytes[5]{}; ULONG read = 0;
-                HRESULT result = medium.pstm->Read(bytes, 5, &read);
+                char pendingBytes[5]{}; ULONG read = 0;
+                HRESULT result = medium.pstm->Read(pendingBytes, 5, &read);
                 cancel.join();
                 Check(result == HRESULT_FROM_WIN32(ERROR_CANCELLED));
                 ReleaseStgMedium(&medium);

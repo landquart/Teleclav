@@ -48,7 +48,8 @@ public sealed class ShellCrossProcessTests
                     new(RemoteDownloadOpKind.DownloadFile, "/проект/nested/b.bin", "проект/nested/b.bin", 5, DateTime.UnixEpoch),
                     new(RemoteDownloadOpKind.DownloadFile, "/c.txt", "c.txt", 5, DateTime.UnixEpoch),
                 ];
-                using var drag = new ShellVirtualFileDrag(browser, entries, mode is "slow" or "delay100" or "pendingcancel" ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(200));
+                TimeSpan idleTimeout = mode is "noend" or "crash" ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(30);
+                using var drag = new ShellVirtualFileDrag(browser, entries, TimeSpan.FromSeconds(30), idleTimeout);
                 using var large = new ShellReadStream(new PatternStream());
                 bool closed = false;
                 drag.Closed = () => Volatile.Write(ref closed, true);
