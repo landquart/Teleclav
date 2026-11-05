@@ -48,10 +48,10 @@ public sealed class ShellCrossProcessTests
                 bool closed = false;
                 drag.Closed = () => Volatile.Write(ref closed, true);
                 Marshal.ThrowExceptionForHR(CreateStreamOnHGlobal(IntPtr.Zero, true, out IStream stream));
-                Guid iid = mode == "large" ? typeof(IShellNativeStream).GUID : typeof(IDataObject).GUID;
+                Guid iid = mode == "large" ? typeof(IShellNativeStream).GUID : typeof(IShellNativeDataObject).GUID;
                 IntPtr pointer = mode == "large"
                     ? Marshal.GetComInterfaceForObject(large, typeof(IShellNativeStream))
-                    : Marshal.GetComInterfaceForObject(drag, typeof(IDataObject));
+                    : Marshal.GetComInterfaceForObject(drag, typeof(IShellNativeDataObject));
                 try
                 {
                     Marshal.ThrowExceptionForHR(CoMarshalInterface(stream, ref iid, pointer, 0, IntPtr.Zero, 0));

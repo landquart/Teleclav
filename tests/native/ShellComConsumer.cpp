@@ -144,7 +144,7 @@ static void DataContract(IDataObject* data) {
     Check(here.hGlobal != nullptr);
     HRESULT hereResult = data->GetDataHere(&format, &here);
     std::cout << "GetDataHere HGLOBAL HRESULT=" << std::hex << hereResult << std::dec << std::endl;
-    Check(hereResult == E_NOTIMPL || hereResult == DV_E_TYMED); // standard proxy can refuse in/out HGLOBAL
+    Check(hereResult == E_NOTIMPL);
     FORMATETC streamFormat = Format(CFSTR_FILECONTENTS, 1, TYMED_ISTREAM);
     STGMEDIUM streamMedium{};
     streamMedium.tymed = TYMED_ISTREAM;

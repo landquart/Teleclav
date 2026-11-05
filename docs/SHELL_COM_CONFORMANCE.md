@@ -57,7 +57,9 @@ deadline to exercise abandonment without waiting for the production deadline.
 Streams are read-only. Transaction rollback and region locks are unsupported.
 IDataObject GetDataHere, SetData, canonicalization and DATADIR_SET enumeration
 return E_NOTIMPL. Advisory methods return OLE_E_ADVISENOTSUPPORTED.
-The native tests assert these HRESULTs. Ordinary Stream read/write failures
+The native tests assert these HRESULTs. GetDataHere uses a PreserveSig slot
+to retain the caller-owned in/out medium on a failed return. Throwing through
+the previous CLR stub reproduced RPC_X_BAD_STUB_DATA across the process boundary. Ordinary Stream read/write failures
 are still covered by the existing controlled managed fault tests.
 
 Real Explorer and OLE DoDragDrop gestures remain NOT TESTED because the runner
