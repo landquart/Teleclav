@@ -136,20 +136,21 @@ public sealed class ShellFolderSftpIntegrationTests
         try
         {
             Directory.CreateDirectory(Path.Combine(remoteRoot, "вложенная", "empty"));
-            byte[] data = new byte[1024 * 1024];
+            byte[] data = new byte[8 * 1024 * 1024];
             RandomNumberGenerator.Fill(data);
             await File.WriteAllBytesAsync(Path.Combine(remoteRoot, "вложенная", "тест file.bin"), data);
             await File.WriteAllBytesAsync(Path.Combine(remoteRoot, "zero"), []);
             await File.WriteAllTextAsync(Path.Combine(remoteRoot, "readme.txt"), "Teleclav SFTP");
+            await using var relay = new PausableSftpRelay(port);
             using var browser = new SftpBrowser();
             await browser.ConnectAsync(new SshConnectionParams
             {
                 Host = "127.0.0.1",
-                Port = port,
+                Port = relay.Port,
                 Username = user,
                 KeyPath = key,
                 Password = password,
-            }, new HostKeyStore(), new PinnedFingerprintVerifier("127.0.0.1", port, fingerprint));
+            }, new HostKeyStore(), new PinnedFingerprintVerifier("127.0.0.1", relay.Port, fingerprint));
             var roots = await browser.ListDirectoryStrictAsync(testRoot);
             SftpFileInfo root = Assert.Single(roots, item => item.Name == "проект");
             var plan = await ShellFolderPlanner.PlanAsync([root], browser.ListDirectoryStrictAsync);
@@ -180,9 +181,16 @@ public sealed class ShellFolderSftpIntegrationTests
                 {
                     await paused.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
                     await browser.ListDirectoryStrictAsync(remoteRoot).WaitAsync(TimeSpan.FromSeconds(3));
+                    relay.PauseDataReplies = true;
+                    paused.Resume.Set();
+                    await relay.Blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    // The metadata connection remains usable while the data socket is stalled.
+                    await browser.ListDirectoryStrictAsync(remoteRoot).WaitAsync(TimeSpan.FromSeconds(3));
                     await stop.CancelAsync();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                        () => transfer.WaitAsync(TimeSpan.FromSeconds(10)));
                 }
-                finally { paused.Resume.Set(); }
+                finally { paused.Resume.Set(); relay.ResumeData.TrySetResult(); }
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => transfer);
             }
             using (var retry = new MemoryStream())
