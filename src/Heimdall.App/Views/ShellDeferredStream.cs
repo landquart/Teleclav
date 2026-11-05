@@ -37,14 +37,23 @@ internal sealed class ShellDeferredStream : Stream
         get
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_enter is not null && !_enter()) { throw new OperationCanceledException(); }
-            try { return _open.WaitAsync(_stop.Token).GetAwaiter().GetResult(); }
+            bool entered = false;
+            try
+            {
+                // Completed, verified readers remain valid after the drag is cancelled.
+                if (!_open.IsCompleted && _enter is not null)
+                {
+                    if (!_enter()) { throw new OperationCanceledException(); }
+                    entered = true;
+                }
+                return _open.WaitAsync(_stop.Token).GetAwaiter().GetResult();
+            }
             catch (Exception ex)
             {
                 _failure(ex);
                 throw ShellTransferFailure.ToComException(ex);
             }
-            finally { _exit?.Invoke(); }
+            finally { if (entered) { _exit?.Invoke(); } }
         }
     }
 

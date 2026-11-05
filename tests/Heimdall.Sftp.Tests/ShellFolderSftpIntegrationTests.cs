@@ -181,6 +181,17 @@ public sealed class ShellFolderSftpIntegrationTests
                 {
                     await paused.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
                     await browser.ListDirectoryStrictAsync(remoteRoot).WaitAsync(TimeSpan.FromSeconds(3));
+                    int connections = relay.ConnectionCount;
+                    using var queuedStop = new CancellationTokenSource();
+                    using var queuedDestination = new MemoryStream();
+                    Task queued = browser.DownloadToStreamWithinLimitAsync(binary.RemotePath, queuedDestination,
+                        binary.Size, binary.LastModified, queuedStop.Token);
+                    await queuedStop.CancelAsync();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                        () => queued.WaitAsync(TimeSpan.FromSeconds(3)));
+                    Assert.False(transfer.IsCompleted);
+                    Assert.Equal(connections, relay.ConnectionCount);
+                    relay.PausedConnection = connections;
                     relay.PauseDataReplies = true;
                     paused.Resume.Set();
                     await relay.Blocked.Task.WaitAsync(TimeSpan.FromSeconds(10));

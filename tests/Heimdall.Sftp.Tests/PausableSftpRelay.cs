@@ -12,6 +12,9 @@ internal sealed class PausableSftpRelay : IAsyncDisposable
     private readonly List<Task> _connections = [];
     private readonly Task _accept;
     private readonly int _targetPort;
+    private int _connectionCount;
+    internal int ConnectionCount => Volatile.Read(ref _connectionCount);
+    internal int PausedConnection;
     internal volatile bool PauseDataReplies;
     internal TaskCompletionSource Blocked { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal TaskCompletionSource ResumeData { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -28,11 +31,10 @@ internal sealed class PausableSftpRelay : IAsyncDisposable
     {
         try
         {
-            int number = 0;
             while (!_stop.IsCancellationRequested)
             {
                 TcpClient client = await _listener.AcceptTcpClientAsync(_stop.Token);
-                _connections.Add(RelayAsync(client, ++number));
+                _connections.Add(RelayAsync(client, Interlocked.Increment(ref _connectionCount)));
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -68,8 +70,8 @@ internal sealed class PausableSftpRelay : IAsyncDisposable
         int read;
         while ((read = await source.ReadAsync(buffer, ct)) != 0)
         {
-            // Connection one carries metadata; the reused second connection carries data.
-            if (number == 2 && PauseDataReplies)
+            // The test selects the active data connection after authentication/probing.
+            if (number == Volatile.Read(ref PausedConnection) && PauseDataReplies)
             {
                 Blocked.TrySetResult();
                 await ResumeData.Task.WaitAsync(ct);

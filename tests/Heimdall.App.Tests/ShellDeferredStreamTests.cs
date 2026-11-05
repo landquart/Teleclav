@@ -31,6 +31,16 @@ public sealed class ShellDeferredStreamTests
     }
 
     [Fact]
+    public void VerifiedReader_RemainsReadableWhenLifetimeRejectsNewWork()
+    {
+        using var stream = new ShellDeferredStream(_ => Task.FromResult<Stream>(new MemoryStream([42])),
+            1, _ => { }, () => { }, () => false, () => throw new InvalidOperationException());
+        byte[] bytes = new byte[1];
+        stream.ReadExactly(bytes);
+        Assert.Equal(42, bytes[0]);
+    }
+
+    [Fact]
     public async Task DisposeBeforeOpenCompletes_ReleasesLateStreamExactlyOnce()
     {
         var ready = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
