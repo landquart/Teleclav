@@ -718,8 +718,9 @@ public sealed partial class SftpBrowser : IRemoteBrowser, IRemoteNoClobberPublis
         {
             SftpClient client = transfer.Connection.Client;
             using LimitedWriteStream limit = new(destination, maximumBytes);
-            await Task.Run(() => GuardedSftpDownload.Copy(remotePath, maximumBytes,
-                path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct, plannedLastModified), ct).ConfigureAwait(false);
+            await Task.Run(() => GuardedSftpDownload.CopyAsync(remotePath, maximumBytes,
+                path => GetGuardedFileInfo(client, path, ct), path => client.OpenRead(path), limit, ct,
+                plannedLastModified, transfer.Connection.CloseAsync), ct).ConfigureAwait(false);
         }
         catch (Exception)
         {

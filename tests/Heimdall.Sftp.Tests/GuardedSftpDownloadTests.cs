@@ -9,6 +9,39 @@ public sealed class GuardedSftpDownloadTests
         => new("a", "/a", kind, size, DateTime.UnixEpoch.AddSeconds(seconds), "", "", "");
 
     [Fact]
+    public async Task AsyncRead_PropagatesTokenAndAbortsBeforeClosingTheSource()
+    {
+        using var stop = new CancellationTokenSource();
+        using var output = new MemoryStream();
+        bool aborted = false;
+        bool closedAfterAbort = false;
+        var source = new WaitingReadStream(() => closedAfterAbort = aborted);
+        Task copy = GuardedSftpDownload.CopyAsync("/a", 5, _ => FileInfo(), _ => source, output,
+            stop.Token, abort: () => { aborted = true; return Task.CompletedTask; });
+        await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(stop.Token, source.Token);
+        await stop.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copy.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.True(aborted);
+        Assert.True(closedAfterAbort);
+        Assert.Equal(0, output.Length);
+    }
+
+    private sealed class WaitingReadStream(Action closed) : MemoryStream(new byte[5])
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal CancellationToken Token;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Token = cancellationToken;
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+        protected override void Dispose(bool disposing) { closed(); base.Dispose(disposing); }
+    }
+
+    [Fact]
     public void Transfer_CopiesBytesAndChecksOpenedLength()
     {
         using MemoryStream output = new();
