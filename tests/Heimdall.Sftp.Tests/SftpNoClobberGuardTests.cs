@@ -15,6 +15,7 @@
  */
 
 using System.Reflection;
+using Heimdall.App.Tests.Views.EmbeddedRdp;
 using Heimdall.Ssh;
 
 namespace Heimdall.Sftp.Tests;
@@ -140,7 +141,9 @@ public sealed class SftpNoClobberGuardTests
         // The adjacent behavioral tests pass a missing file to both invalid mode/runner
         // combinations. They require the guard's error before either source opener can run.
         int tempPathIndex = upload.IndexOf("CreateRemoteTempPath(", StringComparison.Ordinal);
-        int lockIndex = upload.IndexOf("OpenTransferAsync(", StringComparison.Ordinal);
+        const string acquireTransfer = "await using TransferLease transfer = await OpenTransferAsync(ct).ConfigureAwait(false);";
+        Assert.True(ViewSource.IsStatementOfTheMethodBody(ViewSource.WithoutCommentsAndLiterals(upload), acquireTransfer));
+        int lockIndex = upload.IndexOf(acquireTransfer, StringComparison.Ordinal);
         int openIndex = upload.IndexOf("OpenTempExclusive:", StringComparison.Ordinal);
         int preflightIndex = upload.IndexOf(
             "EnsureReplacementPreservesMetadataAsync(",

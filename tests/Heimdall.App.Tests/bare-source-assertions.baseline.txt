@@ -195,7 +195,6 @@ tests/Heimdall.Sftp.Tests/SftpModePreservationTests.cs|SftpBrowser_StagingOwners
 tests/Heimdall.Sftp.Tests/SftpModePreservationTests.cs|SftpBrowser_StagingOwnership_IsAcquiredOnlyAfterTheOpenReturns|index-of|"if (stagingOwned)"
 tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PrivateUpload_GuardIsAnEquivalence_AndPrecedesEveryAccess|index-of|"if (publishesByLink != (noClobberRunner is not null))"
 tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PrivateUpload_GuardIsAnEquivalence_AndPrecedesEveryAccess|index-of|"CreateRemoteTempPath("
-tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PrivateUpload_GuardIsAnEquivalence_AndPrecedesEveryAccess|index-of|"_clientLock.WaitAsync("
 tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PrivateUpload_GuardIsAnEquivalence_AndPrecedesEveryAccess|index-of|"OpenTempExclusive:"
 tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PrivateUpload_GuardIsAnEquivalence_AndPrecedesEveryAccess|index-of|"EnsureReplacementPreservesMetadataAsync("
 tests/Heimdall.Sftp.Tests/SftpNoClobberGuardTests.cs|PublishingCommit_LinksExclusively_AndNeverReachesTheRenamingCommit|assert-presence|"PublishByExclusiveLink("

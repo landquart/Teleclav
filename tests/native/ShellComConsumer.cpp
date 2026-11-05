@@ -246,7 +246,7 @@ int wmain(int argc, wchar_t** argv) {
                 char bytes[5]{}; ULONG read = 0;
                 HRESULT result = medium.pstm->Read(bytes, 5, &read);
                 cancel.join();
-                Check(FAILED(result));
+                Check(result == HRESULT_FROM_WIN32(ERROR_CANCELLED));
                 ReleaseStgMedium(&medium);
                 Check(FAILED(data->GetData(&content, &medium)));
             }

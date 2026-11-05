@@ -70,10 +70,13 @@ public sealed class ShellCrossProcessTests
                     var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
                     var elapsed = Stopwatch.StartNew();
                     int ticks = 0;
+                    Stopwatch? preparation = null;
                     timer.Tick += (_, _) =>
                     {
                         ticks++;
-                        if (mode is "slow" or "delay100" && elapsed.ElapsedMilliseconds >= (mode == "slow" ? 3000 : 100))
+                        if (proxy.DownloadStarted.Task.IsCompleted) { preparation ??= Stopwatch.StartNew(); }
+                        if (mode is "slow" or "delay100" && preparation is not null
+                            && preparation.ElapsedMilliseconds >= (mode == "slow" ? 3000 : 100))
                         {
                             proxy.ContinueDownload.TrySetResult();
                         }
