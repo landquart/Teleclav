@@ -244,6 +244,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native COM consumer build failed.' }
           "TELECLAV_NATIVE_COM_CONSUMER=$consumer" | Add-Content $env:GITHUB_ENV
 
+      - name: Test native cross-process Shell COM
+        run: >
+          dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-build --no-restore
+          --filter "FullyQualifiedName~ShellCrossProcessTests|FullyQualifiedName~Read_FillsTheRequestAcrossShortUnderlyingReads"
+          --logger "console;verbosity=detailed"
+
       - name: Test Windows staging ownership
         timeout-minutes: 10
         run: >

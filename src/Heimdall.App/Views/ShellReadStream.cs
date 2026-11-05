@@ -51,7 +51,20 @@ public sealed class ShellReadStream : IShellNativeStream, IDisposable
 
     private int ReadBytes(byte[] buffer, int count)
     {
-        lock (_gate) { return _stream.Read(buffer, 0, count); }
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        if (count > buffer.Length) { throw new ArgumentException("The buffer is smaller than the request.", nameof(buffer)); }
+        lock (_gate)
+        {
+            int total = 0;
+            while (total < count)
+            {
+                int received = _stream.Read(buffer, total, count - total);
+                if (received == 0) { break; }
+                total += received;
+            }
+            return total;
+        }
     }
 
     public void Seek(long move, int origin, IntPtr position)

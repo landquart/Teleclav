@@ -27,7 +27,7 @@ References:
 ## Pending acceptance
 
 Native process execution, full Windows regression and red/green evidence await
-CI. Explorer remains NOT TESTED. The initial native fixture covers two regular
+CI. Local red/green evidence reproduced one byte before the fix and five after it. Explorer remains NOT TESTED. The initial native fixture covers two regular
 files, not materialization of a complete hierarchy, consumer crashes or a full
 OLE drag gesture. Clone remains unsupported and its compatibility needs further
 review. Crapper, Dryer and Mutator are NOT RUN for C#.

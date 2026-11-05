@@ -12,6 +12,13 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "uuid.lib")
 
+struct __declspec(uuid("3D8B0590-F691-11D2-8EA9-006097DF5BD4")) AsyncCapability : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE InOperation(BOOL*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE EndOperation(HRESULT, IBindCtx*, DWORD) = 0;
+};
 static void Check(bool ok) { if (!ok) throw std::runtime_error("COM contract failed"); }
 int wmain(int argc, wchar_t** argv)
 {
@@ -30,6 +37,14 @@ int wmain(int argc, wchar_t** argv)
         IUnknown* unknown = nullptr;
         Check(SUCCEEDED(data->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&unknown))));
         unknown->Release();
+        AsyncCapability* async = nullptr;
+        Check(SUCCEEDED(data->QueryInterface(__uuidof(AsyncCapability), reinterpret_cast<void**>(&async))));
+        Check(async->SetAsyncMode(TRUE) == S_OK);
+        BOOL active = FALSE;
+        Check(async->GetAsyncMode(&active) == S_OK && active);
+        Check(async->StartOperation(nullptr) == S_OK);
+        Check(FAILED(async->StartOperation(nullptr)));
+        Check(async->InOperation(&active) == S_OK && active);
         IEnumFORMATETC* formats = nullptr;
         Check(SUCCEEDED(data->EnumFormatEtc(DATADIR_GET, &formats)));
         FORMATETC offered{};
@@ -64,6 +79,9 @@ int wmain(int argc, wchar_t** argv)
             Check(medium.pstm->Read(buffer, 1, &read) == S_FALSE && read == 0);
             ReleaseStgMedium(&medium);
         }
+        Check(async->EndOperation(S_OK, nullptr, DROPEFFECT_COPY) == S_OK);
+        Check(async->InOperation(&active) == S_OK && !active);
+        async->Release();
         data->Release();
         CoUninitialize();
         std::cout << "PASS native out-of-process IDataObject and IStream" << std::endl;
