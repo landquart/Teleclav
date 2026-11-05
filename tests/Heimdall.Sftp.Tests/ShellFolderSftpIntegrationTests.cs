@@ -96,6 +96,23 @@ public sealed class ShellFolderSftpIntegrationTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    private sealed class PausedDestination : MemoryStream
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ManualResetEventSlim Resume { get; } = new(false);
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            Started.TrySetResult();
+            if (!Resume.Wait(TimeSpan.FromSeconds(15))) { throw new TimeoutException("The test did not release its destination."); }
+            base.Write(buffer, offset, count);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            Resume.Set();
+            base.Dispose(disposing);
+        }
+    }
+
     [LocalSftpFact]
     public Task FolderPlanAndBoundedDownload_PreserveTreeAndHashes()
         => VerifyFolderDownloadAsync(Environment.GetEnvironmentVariable("TELECLAV_TEST_SFTP_USER") ?? Environment.UserName,
@@ -153,6 +170,26 @@ public sealed class ShellFolderSftpIntegrationTests
                 }
             }
             Assert.True(Directory.Exists(Path.Combine(localRoot, "проект", "вложенная", "empty")));
+            var binary = Assert.Single(plan, item => item.RelativePath.EndsWith(".bin", StringComparison.Ordinal));
+            using (var paused = new PausedDestination())
+            using (var stop = new CancellationTokenSource())
+            {
+                Task transfer = browser.DownloadToStreamWithinLimitAsync(binary.RemotePath, paused,
+                    binary.Size, binary.LastModified, stop.Token);
+                try
+                {
+                    await paused.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    await browser.ListDirectoryStrictAsync(remoteRoot).WaitAsync(TimeSpan.FromSeconds(3));
+                    await stop.CancelAsync();
+                }
+                finally { paused.Resume.Set(); }
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => transfer);
+            }
+            using (var retry = new MemoryStream())
+            {
+                await browser.DownloadToStreamWithinLimitAsync(binary.RemotePath, retry, binary.Size, binary.LastModified, default);
+                Assert.Equal(SHA256.HashData(data), SHA256.HashData(retry.ToArray()));
+            }
             var plannedText = Assert.Single(plan, item => item.RelativePath.EndsWith("/readme.txt", StringComparison.Ordinal));
             await File.WriteAllTextAsync(plannedText.RemotePath, "Modified file");
             File.SetLastWriteTimeUtc(plannedText.RemotePath, plannedText.LastModified.AddMinutes(1));

@@ -20,6 +20,8 @@ public sealed class ShellCrossProcessTests
     [InlineData("crash")]
     [InlineData("cancel")]
     [InlineData("large")]
+    [InlineData("delay100")]
+    [InlineData("slow")]
     public void NativeConsumer_UnmarshalsDataObjectAndReadsRepeatedStreams(string mode)
     {
         string executable = Environment.GetEnvironmentVariable("TELECLAV_NATIVE_COM_CONSUMER")
@@ -33,7 +35,9 @@ public sealed class ShellCrossProcessTests
             try
             {
                 IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, ShellVirtualFileDragTests.BrowserProxy>();
-                ((ShellVirtualFileDragTests.BrowserProxy)browser).ProvideContent = true;
+                var proxy = (ShellVirtualFileDragTests.BrowserProxy)browser;
+                proxy.ProvideContent = true;
+                proxy.PauseDownload = mode is "slow" or "delay100";
                 ShellFolderItem[] entries =
                 [
                     new(RemoteDownloadOpKind.MakeDirectory, "/проект", "проект", 0),
@@ -43,7 +47,7 @@ public sealed class ShellCrossProcessTests
                     new(RemoteDownloadOpKind.DownloadFile, "/проект/nested/b.bin", "проект/nested/b.bin", 5, DateTime.UnixEpoch),
                     new(RemoteDownloadOpKind.DownloadFile, "/c.txt", "c.txt", 5, DateTime.UnixEpoch),
                 ];
-                using var drag = new ShellVirtualFileDrag(browser, entries, TimeSpan.FromMilliseconds(200));
+                using var drag = new ShellVirtualFileDrag(browser, entries, mode is "slow" or "delay100" ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(200));
                 using var large = new ShellReadStream(new PatternStream());
                 bool closed = false;
                 drag.Closed = () => Volatile.Write(ref closed, true);
@@ -64,8 +68,14 @@ public sealed class ShellCrossProcessTests
                     var frame = new DispatcherFrame();
                     var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
                     var elapsed = Stopwatch.StartNew();
+                    int ticks = 0;
                     timer.Tick += (_, _) =>
                     {
+                        ticks++;
+                        if (proxy.PauseDownload && elapsed.ElapsedMilliseconds >= (mode == "slow" ? 3000 : 100))
+                        {
+                            proxy.ContinueDownload.TrySetResult();
+                        }
                         if (File.Exists(packet + ".cancel") && !File.Exists(packet + ".cancelled"))
                         {
                             drag.Cancel();
@@ -75,9 +85,10 @@ public sealed class ShellCrossProcessTests
                     };
                     timer.Start();
                     try { Dispatcher.PushFrame(frame); }
-                    finally { timer.Stop(); }
+                    finally { timer.Stop(); proxy.ContinueDownload.TrySetResult(); }
                     if (!child.HasExited) { child.Kill(entireProcessTree: true); throw new TimeoutException("Native COM consumer timed out."); }
                     Assert.Equal(0, child.ExitCode);
+                    if (mode is "slow" or "delay100") { Assert.True(ticks >= 2, "The WPF dispatcher did not process its heartbeat."); }
                     if (mode is not "crash" and not "large")
                     {
                         byte[] expected = SHA256.HashData("hello"u8);

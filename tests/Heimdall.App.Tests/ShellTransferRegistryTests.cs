@@ -30,12 +30,14 @@ public sealed class ShellTransferRegistryTests
         Assert.Equal(0, cancelled);
     }
 
-    [Fact]
-    public void Stop_ContinuesWhenCancellationCallbackThrows()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Stop_ContinuesWhenCancellationCallbackThrows(bool aggregate)
     {
         var registry = new ShellTransferRegistry();
         int cancelled = 0;
-        Assert.True(registry.Add(() => throw new AggregateException(new InvalidOperationException())));
+        Assert.True(registry.Add(() => throw (aggregate ? new AggregateException(new InvalidOperationException()) : new InvalidOperationException())));
         Assert.True(registry.Add(() => cancelled++));
         registry.Stop();
         Assert.Equal(1, cancelled);

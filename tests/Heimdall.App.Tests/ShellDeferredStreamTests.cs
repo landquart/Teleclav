@@ -7,6 +7,30 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDeferredStreamTests
 {
     [Fact]
+    public async Task CancelPending_UnblocksReadWhenOpenerIgnoresCancellation()
+    {
+        var ready = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stream = new ShellDeferredStream(_ => ready.Task, 1, _ => { }, () => { });
+        Task read = Task.Run(() =>
+        {
+            started.SetResult();
+            Assert.ThrowsAny<System.Runtime.InteropServices.COMException>(() => stream.Read(new byte[1], 0, 1));
+        });
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            stream.CancelPending();
+            await read.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            ready.TrySetResult(new MemoryStream([42]));
+            await read.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
     public async Task DisposeBeforeOpenCompletes_ReleasesLateStreamExactlyOnce()
     {
         var ready = new TaskCompletionSource<Stream>(TaskCreationOptions.RunContinuationsAsynchronously);
