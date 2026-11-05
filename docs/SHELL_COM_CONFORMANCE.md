@@ -1,8 +1,13 @@
 # Shell COM conformance F8
 
 Base F7 head 38858b6d14b83914e0020aab30a68af157c88e0f passed CI 87.
-The original F8 native fixture passed Debug and Release in CI 91. The
-expanded conformance matrix below requires the subsequent F8 CI run.
+The original F8 native fixture passed Debug and Release in CI 91.
+The expanded six-mode native matrix and Windows staging passed Debug in
+[CI 96](https://github.com/landquart/Teleclav/actions/runs/41983949785) on
+84ca5d48428d25d90f18295ea8d1aeb7f761674e. That run stopped on test import
+ordering after the native and staging checks. The final PR head and complete
+CI result are recorded in [PR 17](https://github.com/landquart/Teleclav/pull/17).
+The final workflow repeats the matrix in Debug and the required Release suite.
 
 ## Implementation and ABI
 
@@ -75,3 +80,17 @@ Crapper, Dryer and Mutator are NOT RUN for C#.
 - https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-istream-copyto
 - https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-comarshalinterface
 - https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-counmarshalinterface
+
+## Review and execution
+
+The production changes are limited to the stream cursors/shared lease,
+ISequentialStream exposure and the IDataObject GetDataHere marshaling slot.
+Existing source validation, the F3 journal format and handle-based publication
+and cleanup remain the exercised transfer path. Native unsupported-method
+checks reproduced the old GetDataHere failure as HRESULT 0x800706F7 before
+the PreserveSig correction; the corrected slot returned E_NOTIMPL in CI 96.
+
+For local Windows execution, build tests/native/ShellComConsumer.cpp with an
+x64 MSVC developer shell and cl /std:c++17 /EHsc. Set
+TELECLAV_NATIVE_COM_CONSUMER to the absolute executable path before running
+ShellCrossProcessTests. CI performs this build and sets the variable itself.
