@@ -7,6 +7,11 @@ internal static class GuardedSftpDownload
 {
     internal static void Copy(string path, long expectedSize, Func<string, SftpFileInfo> stat,
         Func<string, Stream> open, Stream output, CancellationToken ct, DateTime? plannedLastModified = null)
+        => CopyAsync(path, expectedSize, stat, open, output, ct, plannedLastModified).GetAwaiter().GetResult();
+
+    internal static async Task CopyAsync(string path, long expectedSize, Func<string, SftpFileInfo> stat,
+        Func<string, Stream> open, Stream output, CancellationToken ct, DateTime? plannedLastModified = null,
+        Func<Task>? abort = null)
     {
         ct.ThrowIfCancellationRequested();
         SftpFileInfo initial = stat(path);
@@ -17,25 +22,34 @@ internal static class GuardedSftpDownload
         EnsureSame(initial, stat(path));
         ct.ThrowIfCancellationRequested();
         using Stream input = open(path);
-        if (!input.CanSeek || input.Length != expectedSize)
-            throw new IOException("The opened file has an unexpected size or cannot be checked.");
-        EnsureSame(initial, stat(path));
-        byte[] buffer = new byte[81920];
-        long copied = 0;
-        while (true)
+        try
         {
+            if (!input.CanSeek || input.Length != expectedSize)
+                throw new IOException("The opened file has an unexpected size or cannot be checked.");
+            EnsureSame(initial, stat(path));
+            byte[] buffer = new byte[81920];
+            long copied = 0;
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                int count = await input.ReadAsync(buffer, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (count == 0) { break; }
+                if (count > expectedSize - copied) { throw new IOException("The remote file grew during transfer."); }
+                output.Write(buffer, 0, count);
+                copied += count;
+            }
             ct.ThrowIfCancellationRequested();
-            int count = input.Read(buffer, 0, buffer.Length);
-            ct.ThrowIfCancellationRequested();
-            if (count == 0) { break; }
-            if (count > expectedSize - copied) { throw new IOException("The remote file grew during transfer."); }
-            output.Write(buffer, 0, count);
-            copied += count;
+            if (copied != expectedSize || input.Length != expectedSize)
+                throw new IOException("The remote file size changed during transfer.");
+            EnsureSame(initial, stat(path));
         }
-        ct.ThrowIfCancellationRequested();
-        if (copied != expectedSize || input.Length != expectedSize)
-            throw new IOException("The remote file size changed during transfer.");
-        EnsureSame(initial, stat(path));
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // Close the isolated transport before a stream Dispose can wait for CLOSE replies.
+            if (abort is not null) { await abort().ConfigureAwait(false); }
+            throw;
+        }
     }
 
     private static void EnsureSame(SftpFileInfo initial, SftpFileInfo current)

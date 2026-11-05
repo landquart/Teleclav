@@ -212,6 +212,7 @@ internal sealed class ShellStagingWriteStream(FileStream file, long limit, Actio
 {
     private long _count;
     internal string FilePath => filePath ?? file.Name;
+    internal Action? Progress { get; set; }
     public override bool CanRead => false;
     public override bool CanSeek => false;
     public override bool CanWrite => true;
@@ -228,6 +229,7 @@ internal sealed class ShellStagingWriteStream(FileStream file, long limit, Actio
         file.Write(buffer);
         _count += buffer.Length;
         written();
+        if (buffer.Length != 0) { Progress?.Invoke(); }
     }
     public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {

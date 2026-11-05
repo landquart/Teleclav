@@ -261,8 +261,10 @@ public sealed class SshConnectionFactoryTests
         }
     }
 
-    [Fact]
-    public void CreateSftpClient_Dispose_DisposesPrivateKeyFile()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CreateSftpClient_Close_DisposesPrivateKeyFile(bool abort)
     {
         var keyPath = CreateTempRsaPrivateKeyFile();
         var connParams = new SshConnectionParams
@@ -282,7 +284,12 @@ public sealed class SshConnectionFactoryTests
 
             Assert.False(IsPrivateKeyFileDisposed(keyFile));
 
-            client.Dispose();
+            if (abort)
+            {
+                SshConnectionFactory.AbortSftpClient(client);
+                SshConnectionFactory.AbortSftpClient(client);
+            }
+            else { client.Dispose(); }
 
             Assert.True(IsPrivateKeyFileDisposed(keyFile));
         }

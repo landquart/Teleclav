@@ -226,6 +226,14 @@ public static class SshConnectionFactory
         }
     }
 
+    /// <summary>Aborts a factory-owned isolated transfer client without waiting for SFTP channel close replies.</summary>
+    internal static void AbortSftpClient(SftpClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        if (client is not OwnedSftpClient owned) { throw new ArgumentException("The SFTP client must be factory-owned.", nameof(client)); }
+        owned.Abort();
+    }
+
     private static OwnedConnectionInfo CreateOwned(
         SshConnectionParams connectionParams,
         SshAgentRegistry agentRegistry)
@@ -1138,11 +1146,27 @@ public static class SshConnectionFactory
     private sealed class OwnedSftpClient : SftpClient
     {
         private OwnedConnectionInfo? _ownedConnectionInfo;
+        private int _abort;
 
         public OwnedSftpClient(OwnedConnectionInfo ownedConnectionInfo)
             : base((ownedConnectionInfo ?? throw new ArgumentNullException(nameof(ownedConnectionInfo))).ConnectionInfo)
         {
             _ownedConnectionInfo = ownedConnectionInfo;
+        }
+
+        internal void Abort()
+        {
+            Volatile.Write(ref _abort, 1);
+            Dispose();
+        }
+
+        protected override void OnDisconnecting()
+        {
+            // SSH.NET 2026.0.0 normally disposes the SFTP channel before closing the
+            // transport. A peer withholding replies can stall that graceful close.
+            // On isolated cancellation let BaseClient close the transport first;
+            // SftpClient.Dispose still releases its SFTP session afterwards.
+            if (Volatile.Read(ref _abort) == 0) { base.OnDisconnecting(); }
         }
 
         protected override void Dispose(bool disposing)

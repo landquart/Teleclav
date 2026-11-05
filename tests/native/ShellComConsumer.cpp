@@ -13,6 +13,7 @@
 #include <string>
 #include <stdexcept>
 #include <iostream>
+#include <thread>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -219,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
             Check(data->QueryInterface(__uuidof(AsyncCapability), reinterpret_cast<void**>(&async)) == S_OK);
             BOOL active = FALSE;
             Check(async->SetAsyncMode(mode == L"sync" ? FALSE : TRUE) == S_OK);
-            Check(async->GetAsyncMode(&active) == S_OK && active == (mode != L"sync"));
+            Check(async->GetAsyncMode(&active) == S_OK && (active != FALSE) == (mode != L"sync"));
             if (mode != L"sync") {
                 Check(async->StartOperation(nullptr) == S_OK);
                 Check(FAILED(async->StartOperation(nullptr)));
@@ -237,7 +238,19 @@ int wmain(int argc, wchar_t** argv) {
             for (const auto& entry : entries)
                 if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
                     std::filesystem::create_directories(output / entry.cFileName);
-            for (LONG index : {5, 4, 1, 4}) {
+            if (mode == L"pendingcancel") {
+                FORMATETC content = Format(CFSTR_FILECONTENTS, 1, TYMED_ISTREAM);
+                Check(data->GetData(&content, &medium) == S_OK);
+                auto request = std::filesystem::path(std::wstring(argv[1]) + L".cancel");
+                std::thread cancel([request] { Sleep(200); std::ofstream(request).close(); });
+                char pendingBytes[5]{}; ULONG read = 0;
+                HRESULT result = medium.pstm->Read(pendingBytes, 5, &read);
+                cancel.join();
+                Check(result == HRESULT_FROM_WIN32(ERROR_CANCELLED));
+                ReleaseStgMedium(&medium);
+                Check(FAILED(data->GetData(&content, &medium)));
+            }
+            else for (LONG index : {5, 4, 1, 4}) {
                 FORMATETC content = Format(CFSTR_FILECONTENTS, index, TYMED_ISTREAM);
                 Check(data->GetData(&content, &medium) == S_OK);
                 if (mode == L"crash") { ExitProcess(0); } // intentionally abandon live proxies

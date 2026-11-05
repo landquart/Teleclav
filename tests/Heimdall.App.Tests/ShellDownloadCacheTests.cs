@@ -7,6 +7,21 @@ namespace Heimdall.App.Tests;
 public sealed class ShellDownloadCacheTests
 {
     [Fact]
+    public async Task Progress_KeepsActiveTransferAliveBeyondIdleLimit()
+    {
+        using var cache = new ShellDownloadCache(8, async (_, stream, ct) =>
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                await stream.WriteAsync(new byte[] { 42 }, ct);
+                await Task.Delay(100, ct);
+            }
+        }, waitLimit: TimeSpan.FromMilliseconds(500));
+        using Stream file = await cache.OpenAsync(0, 8, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(8, file.Length);
+    }
+
+    [Fact]
     public void Creation_RefusesReplacementBeforeGuardIsAcquired()
     {
         string? original = null;

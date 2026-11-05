@@ -20,6 +20,7 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
     private readonly ShellDownloadCache _cache;
     private readonly ShellAsyncLifetime _lifetime;
     private readonly TimeSpan _timeout = TransferTimeout();
+    private readonly TimeSpan _comIdleTimeout = TransferTimeout("TELECLAV_SHELL_COM_IDLE_SECONDS");
     private readonly object _asyncGate = new();
     private IntPtr _asyncReference;
     private bool _asyncClosed;
@@ -39,7 +40,7 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
         _files = [file];
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _comIdleTimeout);
     }
 
     internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<SftpFileInfo> files)
@@ -49,20 +50,21 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
         _files = files.ToArray();
         _descriptor = ShellVirtualFileDescriptor.Create(_files);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _comIdleTimeout);
     }
 
-    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items, TimeSpan? timeout = null)
+    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items, TimeSpan? timeout = null, TimeSpan? comIdleTimeout = null)
     {
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
         ArgumentNullException.ThrowIfNull(items);
         _timeout = timeout ?? _timeout;
+        _comIdleTimeout = comIdleTimeout ?? timeout ?? _comIdleTimeout;
         _files = items.Select(item => new SftpFileInfo(item.RelativePath, item.RemotePath,
             item.Kind == RemoteDownloadOpKind.MakeDirectory ? RemoteEntryKind.Directory : RemoteEntryKind.File,
             item.Size, item.LastModified, "", "", "")).ToArray();
         _descriptor = ShellVirtualFileDescriptor.CreateHierarchy(items);
         _cache = CreateCache();
-        _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
+        _lifetime = new ShellAsyncLifetime(Cleanup, _comIdleTimeout);
     }
 
     private ShellDownloadCache CreateCache() => new(ResolveCacheLimit(Environment.GetEnvironmentVariable("TELECLAV_SHELL_CACHE_GIB")),
@@ -75,9 +77,9 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
             ? gib * bytesPerGiB : 16 * bytesPerGiB;
     }
 
-    private static TimeSpan TransferTimeout()
+    private static TimeSpan TransferTimeout(string variable = "TELECLAV_SHELL_TIMEOUT_SECONDS")
     {
-        string? configured = Environment.GetEnvironmentVariable("TELECLAV_SHELL_TIMEOUT_SECONDS");
+        string? configured = Environment.GetEnvironmentVariable(variable);
         return int.TryParse(configured, out int seconds) && seconds is >= 30 and <= 86400
             ? TimeSpan.FromSeconds(seconds) : TimeSpan.FromMinutes(30);
     }
@@ -188,7 +190,7 @@ public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAs
                 try
                 {
                     file = new ShellDeferredStream(ct => _cache.OpenAsync(index, fileEntry.Size, ct), fileEntry.Size,
-                        ex => Interlocked.CompareExchange(ref _transferError, ex, null), _lifetime.ReleaseStream);
+                        ex => Interlocked.CompareExchange(ref _transferError, ex, null), _lifetime.ReleaseStream, _lifetime.Enter, _lifetime.Exit);
                 }
                 catch
                 {

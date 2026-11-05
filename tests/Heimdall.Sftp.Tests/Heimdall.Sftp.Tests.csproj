@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../Heimdall.App.Tests/Views/EmbeddedRdp/ViewSource.cs" Link="ViewSource.cs" />
   </ItemGroup>
 
   <ItemGroup>
