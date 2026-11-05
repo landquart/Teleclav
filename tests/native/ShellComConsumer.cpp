@@ -36,6 +36,28 @@ static void CheckAt(bool ok, int line) {
 }
 #define Check(value) CheckAt((value), __LINE__)
 
+class AdviseSink final : public IAdviseSink {
+    LONG references = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
+        if (!result) return E_POINTER;
+        *result = nullptr;
+        if (iid != IID_IUnknown && iid != IID_IAdviseSink) return E_NOINTERFACE;
+        *result = static_cast<IAdviseSink*>(this); AddRef(); return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&references); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG count = InterlockedDecrement(&references);
+        if (!count) delete this;
+        return count;
+    }
+    void STDMETHODCALLTYPE OnDataChange(FORMATETC*, STGMEDIUM*) override { }
+    void STDMETHODCALLTYPE OnViewChange(DWORD, LONG) override { }
+    void STDMETHODCALLTYPE OnRename(IMoniker*) override { }
+    void STDMETHODCALLTYPE OnSave() override { }
+    void STDMETHODCALLTYPE OnClose() override { }
+};
+
 static FORMATETC Format(const wchar_t* name, LONG index, DWORD medium) {
     return {static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name)), nullptr, DVASPECT_CONTENT, index, medium};
 }
@@ -120,11 +142,24 @@ static void DataContract(IDataObject* data) {
     here.tymed = TYMED_HGLOBAL;
     here.hGlobal = GlobalAlloc(GHND, 4096);
     Check(here.hGlobal != nullptr);
-    Check(data->GetDataHere(&format, &here) == E_NOTIMPL);
+    HRESULT hereResult = data->GetDataHere(&format, &here);
+    std::cout << "GetDataHere HGLOBAL HRESULT=" << std::hex << hereResult << std::dec << std::endl;
+    Check(hereResult == E_NOTIMPL || hereResult == DV_E_TYMED); // standard proxy can refuse in/out HGLOBAL
+    FORMATETC streamFormat = Format(CFSTR_FILECONTENTS, 1, TYMED_ISTREAM);
+    STGMEDIUM streamMedium{};
+    streamMedium.tymed = TYMED_ISTREAM;
+    Check(CreateStreamOnHGlobal(nullptr, TRUE, &streamMedium.pstm) == S_OK);
+    HRESULT streamHereResult = data->GetDataHere(&streamFormat, &streamMedium);
+    std::cout << "GetDataHere IStream HRESULT=" << std::hex << streamHereResult << std::dec << std::endl;
+    Check(streamHereResult == E_NOTIMPL);
+    ReleaseStgMedium(&streamMedium);
     Check(data->SetData(&format, &here, FALSE) == E_NOTIMPL);
     ReleaseStgMedium(&here);
     DWORD connection = 0;
-    Check(data->DAdvise(&format, ADVF_NODATA, nullptr, &connection) == OLE_E_ADVISENOTSUPPORTED);
+    auto sink = new AdviseSink();
+    HRESULT adviseResult = data->DAdvise(&format, ADVF_NODATA, sink, &connection);
+    sink->Release();
+    Check(adviseResult == OLE_E_ADVISENOTSUPPORTED);
     Check(data->DUnadvise(0) == OLE_E_ADVISENOTSUPPORTED);
     IEnumSTATDATA* advice = nullptr;
     Check(data->EnumDAdvise(&advice) == OLE_E_ADVISENOTSUPPORTED);
