@@ -13,6 +13,7 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "uuid.lib")
+#pragma comment(lib, "user32.lib")
 
 struct __declspec(uuid("3D8B0590-F691-11D2-8EA9-006097DF5BD4")) AsyncCapability : IUnknown {
     virtual HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL) = 0;
