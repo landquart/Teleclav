@@ -1,4 +1,6 @@
 // Copyright 2026. Licensed under the Apache License, Version 2.0.
+#define UNICODE
+#define _UNICODE
 #include <windows.h>
 #include <shlobj.h>
 #include <shlwapi.h>
