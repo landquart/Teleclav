@@ -10,6 +10,7 @@
 #include <array>
 #include <filesystem>
 #include <cstring>
+#include <string>
 #include <stdexcept>
 #include <iostream>
 #pragma comment(lib, "ole32.lib")
