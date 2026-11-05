@@ -25,7 +25,7 @@ public sealed partial class SftpBrowser
         internal readonly SftpClient Client = client;
         private readonly Lazy<Task> _close = new(() => Task.Run(() =>
         {
-            try { client.Dispose(); }
+            try { SshConnectionFactory.AbortSftpClient(client); }
             catch (Exception) { Heimdall.Core.Logging.FileLogger.Warn("An isolated SFTP connection failed while closing."); }
         }));
         internal Task CloseAsync() => _close.Value;
