@@ -233,6 +233,23 @@ jobs:
 
       # Run the Windows filesystem security regressions before the release build/publish.
       # Keep a separate TRX so ownership failures remain visible even if later lanes fail.
+      - name: Build native x64 COM consumer
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC x64 tools are required.' }
+          $consumer = Join-Path $env:RUNNER_TEMP 'ShellComConsumer.exe'
+          $command = '"' + $vs + '\Common7\Tools\VsDevCmd.bat" -arch=x64 && cl /nologo /std:c++17 /EHsc /W4 tests\native\ShellComConsumer.cpp /Fe:"' + $consumer + '"'
+          cmd /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'Native COM consumer build failed.' }
+          "TELECLAV_NATIVE_COM_CONSUMER=$consumer" | Add-Content $env:GITHUB_ENV
+
+      - name: Test native cross-process Shell COM
+        run: >
+          dotnet test tests/Heimdall.App.Tests/Heimdall.App.Tests.csproj --no-build --no-restore
+          --filter "FullyQualifiedName~ShellCrossProcessTests|FullyQualifiedName~Read_FillsTheRequestAcrossShortUnderlyingReads"
+          --logger "console;verbosity=detailed"
+
       - name: Test Windows staging ownership
         timeout-minutes: 10
         run: >

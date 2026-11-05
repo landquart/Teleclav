@@ -12,6 +12,74 @@ public sealed class ShellReadStreamTests
     private delegate int NativeRead(IntPtr self, IntPtr buffer, uint count, IntPtr read);
 
     [Fact]
+    public async Task Clones_AllowConcurrentIndependentReads()
+    {
+        using var original = new ShellReadStream(new MemoryStream("hello"u8.ToArray()));
+        original.Clone(out var native);
+        using var clone = Assert.IsType<ShellReadStream>(native);
+        async Task ReadAll(ShellReadStream reader)
+        {
+            await Task.Run(() =>
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    reader.Seek(0, 0, IntPtr.Zero);
+                    byte[] bytes = new byte[5];
+                    reader.Read(bytes, 5, IntPtr.Zero);
+                    Assert.Equal("hello"u8.ToArray(), bytes);
+                }
+            });
+        }
+        await Task.WhenAll(ReadAll(original), ReadAll(clone));
+    }
+
+    [Fact]
+    public void DisposedStream_RejectsZeroByteRead()
+    {
+        using var stream = new ShellReadStream(new MemoryStream());
+        stream.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => stream.Read([], 0, IntPtr.Zero));
+    }
+
+    [Fact]
+    public void Clone_KeepsIndependentPositionAndContentAfterOriginalDisposal()
+    {
+        using var original = new ShellReadStream(new MemoryStream("hello"u8.ToArray()));
+        original.Seek(1, 0, IntPtr.Zero);
+        ((IShellNativeStream)original).Clone(out var nativeClone);
+        using var clone = Assert.IsType<ShellReadStream>(nativeClone);
+        byte[] buffer = new byte[1];
+        clone.Read(buffer, 1, IntPtr.Zero);
+        Assert.Equal((byte)'e', buffer[0]);
+        original.Read(buffer, 1, IntPtr.Zero);
+        Assert.Equal((byte)'e', buffer[0]);
+        original.Dispose();
+        clone.Read(buffer, 1, IntPtr.Zero);
+        Assert.Equal((byte)'l', buffer[0]);
+    }
+
+    [Fact]
+    public void Read_FillsTheRequestAcrossShortUnderlyingReads()
+    {
+        using var stream = new ShellReadStream(new ShortReadStream());
+        byte[] bytes = new byte[5];
+        IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
+        try
+        {
+            stream.Read(bytes, bytes.Length, read);
+            Assert.Equal(5, Marshal.ReadInt32(read));
+            Assert.Equal("hello"u8.ToArray(), bytes);
+        }
+        finally { Marshal.FreeCoTaskMem(read); }
+    }
+
+    private sealed class ShortReadStream() : MemoryStream("hello"u8.ToArray())
+    {
+        public override int Read(byte[] buffer, int offset, int count)
+            => base.Read(buffer, offset, Math.Min(count, 1));
+    }
+
+    [Fact]
     public void NativeRead_StagingFailureReturnsFailingHResult()
     {
         Exception? reported = null;

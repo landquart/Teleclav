@@ -3,7 +3,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using Heimdall.Sftp;
-using ComDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
 using DataFormats = System.Windows.DataFormats;
 
 namespace Heimdall.App.Views;
@@ -11,7 +10,7 @@ namespace Heimdall.App.Views;
 /// <summary>Provides remote files as Shell virtual files, retaining the internal drag marker.</summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapability, IDisposable
+public sealed class ShellVirtualFileDrag : IShellNativeDataObject, IDataObjectAsyncCapability, IDisposable
 {
     private const int DvEFormatEtc = unchecked((int)0x80040064);
     private const int ENotImpl = unchecked((int)0x80004001);
@@ -53,10 +52,11 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         _lifetime = new ShellAsyncLifetime(Cleanup, _timeout);
     }
 
-    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items)
+    internal ShellVirtualFileDrag(IRemoteBrowser browser, IReadOnlyList<ShellFolderItem> items, TimeSpan? timeout = null)
     {
         _browser = browser ?? throw new ArgumentNullException(nameof(browser));
         ArgumentNullException.ThrowIfNull(items);
+        _timeout = timeout ?? _timeout;
         _files = items.Select(item => new SftpFileInfo(item.RelativePath, item.RemotePath,
             item.Kind == RemoteDownloadOpKind.MakeDirectory ? RemoteEntryKind.Directory : RemoteEntryKind.File,
             item.Size, item.LastModified, "", "", "")).ToArray();
@@ -269,6 +269,8 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
         tymed = medium,
     };
 
+    int IShellNativeDataObject.GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => ENotImpl;
+
     public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => throw new COMException("Not supported", ENotImpl);
     public int GetCanonicalFormatEtc(ref FORMATETC input, out FORMATETC output) { output = default; return ENotImpl; }
     public void SetData(ref FORMATETC format, ref STGMEDIUM medium, bool release) => throw new COMException("Not supported", ENotImpl);
@@ -295,7 +297,7 @@ public sealed class ShellVirtualFileDrag : ComDataObject, IDataObjectAsyncCapabi
 
     private static class NativeMethods
     {
-        [DllImport("ole32.dll")] internal static extern int DoDragDrop(ComDataObject data, IDropSource source, int allowed, out int effect);
+        [DllImport("ole32.dll")] internal static extern int DoDragDrop(IShellNativeDataObject data, IDropSource source, int allowed, out int effect);
         [DllImport("shell32.dll")] internal static extern int SHCreateStdEnumFmtEtc(uint count, FORMATETC[] formats, out IEnumFORMATETC result);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalAlloc(uint flags, nuint size);
         [DllImport("kernel32.dll")] internal static extern IntPtr GlobalLock(IntPtr handle);
@@ -314,4 +316,27 @@ public interface IDataObjectAsyncCapability
     [PreserveSig] int StartOperation(IntPtr reserved);
     [PreserveSig] int InOperation([MarshalAs(UnmanagedType.Bool)] out bool active);
     [PreserveSig] int EndOperation(int result, IntPtr reserved, uint effects);
+}
+
+// Preserve the caller-owned STGMEDIUM even when GetDataHere returns a failure.
+// Throwing through the CLR stub can discard the in/out medium during marshaling.
+[ComVisible(true)]
+[Guid("0000010E-0000-0000-C000-000000000046")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IShellNativeDataObject
+{
+    void GetData([In] ref FORMATETC format, out STGMEDIUM medium);
+    [PreserveSig]
+    int GetDataHere([In] ref FORMATETC format, [In, Out] ref STGMEDIUM medium);
+    [PreserveSig]
+    int QueryGetData([In] ref FORMATETC format);
+    [PreserveSig]
+    int GetCanonicalFormatEtc([In] ref FORMATETC input, out FORMATETC output);
+    void SetData([In] ref FORMATETC format, [In] ref STGMEDIUM medium, [MarshalAs(UnmanagedType.Bool)] bool release);
+    IEnumFORMATETC EnumFormatEtc(DATADIR direction);
+    [PreserveSig]
+    int DAdvise([In] ref FORMATETC format, ADVF flags, IAdviseSink sink, out int connection);
+    void DUnadvise(int connection);
+    [PreserveSig]
+    int EnumDAdvise(out IEnumSTATDATA? result);
 }
