@@ -22,6 +22,7 @@ public sealed class ShellCrossProcessTests
     [InlineData("large")]
     [InlineData("delay100")]
     [InlineData("slow")]
+    [InlineData("pendingcancel")]
     public void NativeConsumer_UnmarshalsDataObjectAndReadsRepeatedStreams(string mode)
     {
         string executable = Environment.GetEnvironmentVariable("TELECLAV_NATIVE_COM_CONSUMER")
@@ -37,7 +38,7 @@ public sealed class ShellCrossProcessTests
                 IRemoteBrowser browser = DispatchProxy.Create<IRemoteBrowser, ShellVirtualFileDragTests.BrowserProxy>();
                 var proxy = (ShellVirtualFileDragTests.BrowserProxy)browser;
                 proxy.ProvideContent = true;
-                proxy.PauseDownload = mode is "slow" or "delay100";
+                proxy.PauseDownload = mode is "slow" or "delay100" or "pendingcancel";
                 ShellFolderItem[] entries =
                 [
                     new(RemoteDownloadOpKind.MakeDirectory, "/проект", "проект", 0),
@@ -47,7 +48,7 @@ public sealed class ShellCrossProcessTests
                     new(RemoteDownloadOpKind.DownloadFile, "/проект/nested/b.bin", "проект/nested/b.bin", 5, DateTime.UnixEpoch),
                     new(RemoteDownloadOpKind.DownloadFile, "/c.txt", "c.txt", 5, DateTime.UnixEpoch),
                 ];
-                using var drag = new ShellVirtualFileDrag(browser, entries, mode is "slow" or "delay100" ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(200));
+                using var drag = new ShellVirtualFileDrag(browser, entries, mode is "slow" or "delay100" or "pendingcancel" ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(200));
                 using var large = new ShellReadStream(new PatternStream());
                 bool closed = false;
                 drag.Closed = () => Volatile.Write(ref closed, true);
@@ -72,7 +73,7 @@ public sealed class ShellCrossProcessTests
                     timer.Tick += (_, _) =>
                     {
                         ticks++;
-                        if (proxy.PauseDownload && elapsed.ElapsedMilliseconds >= (mode == "slow" ? 3000 : 100))
+                        if (mode is "slow" or "delay100" && elapsed.ElapsedMilliseconds >= (mode == "slow" ? 3000 : 100))
                         {
                             proxy.ContinueDownload.TrySetResult();
                         }
@@ -89,7 +90,7 @@ public sealed class ShellCrossProcessTests
                     if (!child.HasExited) { child.Kill(entireProcessTree: true); throw new TimeoutException("Native COM consumer timed out."); }
                     Assert.Equal(0, child.ExitCode);
                     if (mode is "slow" or "delay100") { Assert.True(ticks >= 2, "The WPF dispatcher did not process its heartbeat."); }
-                    if (mode is not "crash" and not "large")
+                    if (mode is not "crash" and not "large" and not "pendingcancel")
                     {
                         byte[] expected = SHA256.HashData("hello"u8);
                         foreach (string relative in new[] { "проект/a.txt", "проект/nested/b.bin", "c.txt" })

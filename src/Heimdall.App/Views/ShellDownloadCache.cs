@@ -115,7 +115,8 @@ internal sealed class ShellDownloadCache : IDisposable
             if (remaining <= TimeSpan.Zero) { throw new TimeoutException("Shell staging made no progress within its inactivity limit."); }
             try { return await download.WaitAsync(remaining, ct).ConfigureAwait(false); }
             catch (TimeoutException) when (!download.IsCompleted
-                && Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress)) < _waitLimit) { }
+                && Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress)) < _waitLimit)
+            { }
         }
         return await download.WaitAsync(ct).ConfigureAwait(false);
     }
