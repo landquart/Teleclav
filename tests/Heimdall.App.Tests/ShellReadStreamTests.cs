@@ -12,6 +12,27 @@ public sealed class ShellReadStreamTests
     private delegate int NativeRead(IntPtr self, IntPtr buffer, uint count, IntPtr read);
 
     [Fact]
+    public void Read_FillsTheRequestAcrossShortUnderlyingReads()
+    {
+        using var stream = new ShellReadStream(new ShortReadStream());
+        byte[] bytes = new byte[5];
+        IntPtr read = Marshal.AllocCoTaskMem(sizeof(int));
+        try
+        {
+            stream.Read(bytes, bytes.Length, read);
+            Assert.Equal(5, Marshal.ReadInt32(read));
+            Assert.Equal("hello"u8.ToArray(), bytes);
+        }
+        finally { Marshal.FreeCoTaskMem(read); }
+    }
+
+    private sealed class ShortReadStream() : MemoryStream("hello"u8.ToArray())
+    {
+        public override int Read(byte[] buffer, int offset, int count)
+            => base.Read(buffer, offset, Math.Min(count, 1));
+    }
+
+    [Fact]
     public void NativeRead_StagingFailureReturnsFailingHResult()
     {
         Exception? reported = null;
